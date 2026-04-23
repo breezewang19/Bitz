@@ -10,7 +10,7 @@ load_dotenv()
 
 from agent.adapter import LLMAdapter
 from agent.context import Context
-from agent.loop import Agent
+from agent.loop import Agent, create_spawn_tools
 from agent.tools import ToolRegistry
 
 
@@ -156,7 +156,11 @@ def main():
         max_tokens=4096,
         keep_last_n=20
     )
-    tools = create_tools()
+    # 创建基础工具
+    base_tools = create_tools()
+
+    # 创建包含 spawn_subagents 的完整工具集（主 Agent 专用）
+    tools = create_spawn_tools(adapter, base_tools)
 
     # 保存原始 execute 方法来添加日志
     original_execute = tools.execute
