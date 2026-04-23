@@ -27,7 +27,7 @@ class TestSubAgent:
         )
 
         assert isinstance(subagent.context, Context)
-        assert "测试任务" in subagent.context.system_prompt
+        assert subagent.context.system_prompt.endswith("测试任务")
 
     def test_subagent_depth_is_one_by_default(self):
         """默认 depth=1"""
@@ -92,7 +92,7 @@ class TestSubAgent:
         result = subagent.run()
 
         # 2 步后超限，返回错误信息
-        assert "超限" in result or "max_steps" in result.lower()
+        assert "超限" in result
         # chat 被调用 2 次
         assert mock_adapter.chat.call_count == 2
 
