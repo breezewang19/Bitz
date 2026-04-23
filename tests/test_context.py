@@ -27,14 +27,16 @@ def test_context_add_user():
 
 
 def test_context_add_tool_result():
-    """测试添加工具结果"""
+    """测试添加工具结果（Anthropic 格式）"""
     ctx = Context(system_prompt="You are helpful.")
     ctx.add_user("What is the weather?")
     ctx.add_tool_result("toolu_01", "Sunny, 25 degrees")
     assert len(ctx.messages) == 2
     assert ctx.messages[1]["role"] == "user"
-    assert ctx.messages[1]["tool_use_id"] == "toolu_01"
-    assert ctx.messages[1]["content"] == "Sunny, 25 degrees"
+    # Anthropic 格式：tool_use_id 在 content block 内部
+    assert ctx.messages[1]["content"][0]["type"] == "tool_result"
+    assert ctx.messages[1]["content"][0]["tool_use_id"] == "toolu_01"
+    assert ctx.messages[1]["content"][0]["content"] == "Sunny, 25 degrees"
 
 
 def test_context_trim():

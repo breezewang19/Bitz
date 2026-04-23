@@ -100,12 +100,18 @@ def test_agent_run_tool_call():
     # Check tool was executed
     mock_tools.execute.assert_called_once_with("echo", {"x": "hello"})
 
-    # Check context has user message and tool result
-    assert len(ctx.messages) == 2
+    # Check context has user message, assistant tool_use, and tool result (Anthropic format)
+    assert len(ctx.messages) == 3
     assert ctx.messages[0]["role"] == "user"
-    assert ctx.messages[1]["role"] == "user"
-    assert ctx.messages[1]["tool_use_id"] == "toolu_01"
-    assert ctx.messages[1]["content"] == "hello"
+    assert ctx.messages[0]["content"] == "Echo back hello"
+    # Assistant tool_use message
+    assert ctx.messages[1]["role"] == "assistant"
+    assert ctx.messages[1]["content"][0]["type"] == "tool_use"
+    assert ctx.messages[1]["content"][0]["id"] == "toolu_01"
+    # User tool result
+    assert ctx.messages[2]["role"] == "user"
+    assert ctx.messages[2]["content"][0]["tool_use_id"] == "toolu_01"
+    assert ctx.messages[2]["content"][0]["content"] == "hello"
 
 
 def test_agent_run_max_steps_exceeded():

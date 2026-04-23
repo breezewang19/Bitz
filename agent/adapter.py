@@ -1,9 +1,9 @@
 # agent/adapter.py
-"""LLM 适配器 - 封装 OpenAI 兼容 API 调用"""
+"""LLM 适配器 - Anthropic 协议"""
 import json
 from dataclasses import dataclass
 from typing import Any
-import openai
+import anthropic
 
 
 @dataclass
@@ -14,41 +14,100 @@ class LLMResponse:
 
 
 class LLMAdapter:
-    """LLM 适配器（OpenAI 兼容协议）"""
+    """LLM 适配器（Anthropic 协议）"""
 
-    def __init__(self, api_key: str, base_url: str, model: str):
+    def __init__(self, api_key: str, base_url: str = "https://api.anthropic.com", model: str = "claude-3-5-sonnet-20241022"):
         self.api_key = api_key
         self.base_url = base_url
         self.model = model
+        self.api_url = f"{base_url}/v1/messages"
 
     def chat(self, messages: list[dict], tools: list[dict]) -> LLMResponse:
-        """发送请求到 LLM"""
-        client = openai.OpenAI(api_key=self.api_key, base_url=self.base_url)
+        """发送请求到 LLM（Anthropic 协议）"""
+        client = anthropic.Anthropic(api_key=self.api_key, base_url=self.base_url)
+
+        # 分离 system prompt 和对话消息
+        system_prompt = ""
+        conversation_messages = []
+        for msg in messages:
+            if msg["role"] == "system":
+                system_prompt = msg["content"]
+            else:
+                conversation_messages.append(msg)
+
+        # 转换为 Anthropic 格式: user/assistant
+        anthropic_messages = []
+        for msg in conversation_messages:
+            role = msg["role"]
+            if role == "user":
+                anthropic_messages.append({
+                    "role": "user",
+                    "content": msg["content"]
+                })
+            elif role == "assistant":
+                # 检查是否包含 tool_use
+                if isinstance(msg.get("content"), list):
+                    anthropic_messages.append({
+                        "role": "assistant",
+                        "content": msg["content"]
+                    })
+                else:
+                    anthropic_messages.append({
+                        "role": "assistant",
+                        "content": msg.get("content", "")
+                    })
 
         kwargs = {
             "model": self.model,
-            "messages": messages,
+            "messages": anthropic_messages,
+            "max_tokens": 4096,
         }
 
+        if system_prompt:
+            kwargs["system"] = system_prompt
+
         if tools:
-            kwargs["tools"] = tools
-            kwargs["tool_choice"] = "auto"
-
-        response = client.chat.completions.create(**kwargs)
-
-        choice = response.choices[0]
-        message = choice.message
-
-        tool_calls = getattr(message, 'tool_calls', None)
-        if tool_calls:
-            blocks = []
-            for tc in message.tool_calls:
-                blocks.append({
-                    "type": "tool_use",
-                    "id": tc.id,
-                    "name": tc.function.name,
-                    "input": json.loads(tc.function.arguments)
+            # Anthropic 工具格式
+            anthropic_tools = []
+            for tool in tools:
+                anthropic_tools.append({
+                    "name": tool["name"],
+                    "description": tool.get("description", ""),
+                    "input_schema": tool.get("input_schema", {})
                 })
+            kwargs["tools"] = anthropic_tools
+
+        response = client.messages.create(**kwargs)
+
+        stop_reason = response.stop_reason
+        if stop_reason == "end_turn":
+            # 提取文本内容（跳过 thinking）
+            text_content = ""
+            for block in response.content:
+                if block.type == "text":
+                    text_content += block.text
+                elif block.type == "thinking":
+                    # MiniMax thinking block - skip or store if needed
+                    pass
+            return LLMResponse(content=text_content, stop_reason="end_turn")
+
+        if stop_reason == "tool_use":
+            # 解析工具调用
+            blocks = []
+            for block in response.content:
+                if block.type == "tool_use":
+                    blocks.append({
+                        "type": "tool_use",
+                        "id": block.id,
+                        "name": block.name,
+                        "input": block.input
+                    })
             return LLMResponse(content=blocks, stop_reason="tool_use")
 
-        return LLMResponse(content=message.content or "", stop_reason="end_turn")
+        # 其他情况（如 max_tokens, thinking_closed）
+        # 尝试提取文本
+        text_content = ""
+        for block in response.content:
+            if block.type == "text":
+                text_content += block.text
+        return LLMResponse(content=text_content, stop_reason=stop_reason)

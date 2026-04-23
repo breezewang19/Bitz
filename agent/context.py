@@ -1,5 +1,5 @@
 # agent/context.py
-"""Context 会话上下文管理"""
+"""Context 会话上下文管理 - Anthropic 协议"""
 
 
 class Context:
@@ -16,12 +16,20 @@ class Context:
         self.messages.append({"role": "user", "content": content})
         self._trim()
 
+    def add_assistant_message(self, content: list) -> None:
+        """添加 assistant 消息（包含 tool_use blocks）"""
+        self.messages.append({"role": "assistant", "content": content})
+        self._trim()
+
     def add_tool_result(self, tool_use_id: str, content: str) -> None:
-        """添加工具结果（role是user）"""
+        """添加工具结果（Anthropic 格式：user 角色带 tool_result content block）"""
         self.messages.append({
             "role": "user",
-            "tool_use_id": tool_use_id,
-            "content": content
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": tool_use_id,
+                "content": content
+            }]
         })
         self._trim()
 
@@ -31,7 +39,7 @@ class Context:
             self.messages = self.messages[-self.keep_last_n:]
 
     def get_messages(self) -> list[dict]:
-        """返回包含 system prompt 的完整消息列表"""
+        """返回完整消息列表（system 作为独立条目）"""
         msgs = [{"role": "system", "content": self.system_prompt}]
         msgs.extend(self.messages)
         return msgs
