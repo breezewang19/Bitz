@@ -37,8 +37,8 @@ Bitz/
 │   └── tools.py    # 工具注册表
 ├── tests/           # 单元测试
 ├── learning/        # 学习资料
-│   ├── 2026-04-23-agent-frameworks-research.md
-│   └── 2026-04-23-minimal-agent-research-report.md
+│   ├── 01-agent-frameworks-overview.md
+│   └── 02-minimal-agent-design.md
 ├── tui.py           # 终端界面入口
 ├── .env             # API 配置
 └── requirements.txt # 依赖
@@ -69,5 +69,5 @@ ANTHROPIC_MODEL=MiniMax-M2.7
 
 ## 学习资料
 
-- [Agent 框架调研](learning/2026-04-23-agent-frameworks-research.md)
-- [Minimal Agent 研究报告](learning/2026-04-23-minimal-agent-research-report.md)
+- [Agent 框架总览](learning/01-agent-frameworks-overview.md)
+- [Minimal Agent 设计文档](learning/02-minimal-agent-design.md)
