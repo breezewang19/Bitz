@@ -1,0 +1,39 @@
+# agent/loop.py
+"""Agent 核心循环"""
+from agent.context import Context
+from agent.adapter import LLMAdapter, LLMResponse
+
+
+class Agent:
+    """Agent 主循环"""
+
+    def __init__(self, llm_adapter: LLMAdapter, tools, context: Context, max_steps: int = 10):
+        self.llm_adapter = llm_adapter
+        self.tools = tools
+        self.context = context
+        self.max_steps = max_steps
+
+    def run(self, user_input: str) -> str:
+        """核心循环"""
+        self.context.add_user(user_input)
+
+        for step in range(self.max_steps):
+            messages = self.context.get_messages()
+            tools = self.tools.list_for_llm() if hasattr(self.tools, 'list_for_llm') else []
+
+            response = self.llm_adapter.chat(messages, tools)
+
+            if response.stop_reason == "end_turn":
+                return response.content
+
+            if response.stop_reason == "tool_use":
+                for tool_use in response.content:
+                    tool_name = tool_use["name"]
+                    tool_args = tool_use["input"]
+                    tool_id = tool_use["id"]
+
+                    result = self.tools.execute(tool_name, tool_args)
+                    self.context.add_tool_result(tool_id, result)
+                continue
+
+        return f"Error: Exceeded max_steps ({self.max_steps})"

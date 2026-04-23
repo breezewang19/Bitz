@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minimal Agent</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 { text-align: center; margin-bottom: 20px; color: #4fc3f7; }
+        #chat { flex: 1; overflow-y: auto; margin-bottom: 20px; }
+        .message {
+            padding: 10px 15px;
+            margin-bottom: 10px;
+            border-radius: 10px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .user { background: #0d47a1; margin-left: 20%; }
+        .assistant { background: #2d2d44; margin-right: 20%; }
+        .error { background: #b71c1c; }
+        .status { background: #1b5e20; font-size: 0.9em; }
+        #input-area {
+            display: flex;
+            gap: 10px;
+        }
+        #question {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            background: #2d2d44;
+            color: #fff;
+            font-size: 16px;
+        }
+        #question:focus { outline: 2px solid #4fc3f7; }
+        #submit {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            background: #4fc3f7;
+            color: #1a1a2e;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        #submit:disabled { opacity: 0.5; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+    <h1>Minimal Agent</h1>
+    <div id="chat"></div>
+    <div id="input-area">
+        <input id="question" type="text" placeholder="Ask me anything..." autofocus>
+        <button id="submit">Send</button>
+    </div>
+
+    <script>
+        const chat = document.getElementById('chat');
+        const questionInput = document.getElementById('question');
+        const submitBtn = document.getElementById('submit');
+
+        function addMessage(role, content, className) {
+            const div = document.createElement('div');
+            div.className = `message ${className}`;
+            div.textContent = `${role}: ${content}`;
+            chat.appendChild(div);
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        async function send() {
+            const question = questionInput.value.trim();
+            if (!question) return;
+
+            addMessage('You', question, 'user');
+            questionInput.value = '';
+            submitBtn.disabled = true;
+
+            try {
+                const response = await fetch(`/stream?question=${encodeURIComponent(question)}`);
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const text = decoder.decode(value);
+                    const lines = text.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                if (data.type === 'status') {
+                                    addMessage('System', data.content, 'status');
+                                } else if (data.type === 'result') {
+                                    addMessage('Assistant', data.content, 'assistant');
+                                } else if (data.type === 'error') {
+                                    addMessage('Error', data.content, 'error');
+                                }
+                            } catch (e) {
+                                // Ignore parse errors
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                addMessage('Error', 'Failed to connect to server', 'error');
+            }
+
+            submitBtn.disabled = false;
+            questionInput.focus();
+        }
+
+        submitBtn.addEventListener('click', send);
+        questionInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') send();
+        });
+    </script>
+</body>
+</html>
