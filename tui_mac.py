@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Minimal Agent TUI - 终端对话界面"""
+"""Minimal Agent TUI - macOS 兼容版本"""
 import os
 import sys
 import time
 import threading
+import platform
 from dotenv import load_dotenv
 
 load_dotenv()
 
 from agent.adapter import LLMAdapter
 from agent.context import Context
-from agent.loop import Agent, create_spawn_tools
+from agent.loop import Agent
 from agent.tools import ToolRegistry
 
 
@@ -97,33 +98,27 @@ def thinking_animation(stop_event):
 
 def get_input_styled() -> str:
     """获取用户输入，输入时白底黑字，发送后黑底白字填满整行"""
-    import msvcrt
+    import tty
+    import termios
+
+    # 保存终端设置
+    old_settings = termios.tcgetattr(sys.stdin)
 
     # 打印提示符（白底黑字的小箭头）
     sys.stdout.write(f"{Colors.USER_FG}> {Colors.RESET} ")
     sys.stdout.flush()
 
-    # 读取字符（不回显，我们自己显示）
-    line = ""
-    while True:
-        try:
-            ch = msvcrt.getwch()
-            if ch == '\r':
-                # 清除整行，光标移到行首，显示黑底白字后换行
-                sys.stdout.write("\033[2K\r")
-                # 获取终端宽度
-                try:
-                    import shutil
-                    width = shutil.get_terminal_size().columns
-                except:
-                    width = 80
-                spaces = " " * (width - len(line) - 4)
-                # 显示黑底白字的用户输入
-                sys.stdout.write(f"{Colors.USER_BG}{Colors.USER_FG}>  {line}{spaces}{Colors.RESET}")
-                # sys.stdout.write("\n")  # 换行到下一行
-                sys.stdout.flush()
+    try:
+        # 设置终端为原始模式（关闭回显）
+        tty.setcbreak(sys.stdin.fileno())
+
+        # 读取字符（不回显，我们自己显示）
+        line = ""
+        while True:
+            ch = sys.stdin.read(1)
+            if ch == '\n' or ch == '\r':
                 break
-            elif ch == '\b':
+            elif ch == '\x7f':  # Backspace
                 if line:
                     line = line[:-1]
                     sys.stdout.write('\b \b')
@@ -134,9 +129,22 @@ def get_input_styled() -> str:
                 line += ch
                 sys.stdout.write(ch)
                 sys.stdout.flush()
-        except KeyboardInterrupt:
-            print(f"\n{Colors.ASSISTANT_BOLD}  o{Colors.RESET} {Colors.ASSISTANT}Bye~{Colors.RESET}")
-            sys.exit(0)
+    finally:
+        # 恢复终端设置
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+
+    # 清除整行，光标移到行首，显示黑底白字后换行
+    sys.stdout.write("\033[2K\r")
+    # 获取终端宽度
+    try:
+        import shutil
+        width = shutil.get_terminal_size().columns
+    except:
+        width = 80
+    spaces = " " * (width - len(line) - 4)
+    # 显示黑底白字的用户输入
+    sys.stdout.write(f"{Colors.USER_BG}{Colors.USER_FG}>  {line}{spaces}{Colors.RESET}\n")
+    sys.stdout.flush()
 
     return line
 
@@ -156,11 +164,7 @@ def main():
         max_tokens=4096,
         keep_last_n=20
     )
-    # 创建基础工具
-    base_tools = create_tools()
-
-    # 创建包含 spawn_subagents 的完整工具集（主 Agent 专用）
-    tools = create_spawn_tools(adapter, base_tools)
+    tools = create_tools()
 
     # 保存原始 execute 方法来添加日志
     original_execute = tools.execute

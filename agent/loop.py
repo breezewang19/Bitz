@@ -74,7 +74,12 @@ def create_spawn_tools(llm_adapter, base_tools):
             return f"[错误] 任务数量 {len(tasks)} 超过限制 (5)"
 
         results = pool.spawn(tasks, depth=depth)
-        return pool.format_results(tasks, results)
+        formatted = pool.format_results(tasks, results)
+
+        # 重要：清理 SubAgent 内部执行的任何状态
+        # SubAgent 的 tool_use IDs 只存在于其自己的上下文中，
+        # 不应该泄漏到主 Agent 的上下文
+        return formatted
 
     tools = ToolRegistry()
 

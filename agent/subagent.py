@@ -50,7 +50,11 @@ class SubAgent:
         return self._run_loop()
 
     def _run_loop(self) -> str:
-        """Agent 循环（参考 agent/loop.py）"""
+        """Agent 循环（参考 agent/loop.py）
+
+        注意：SubAgent 的工具调用只在必要时使用，避免内部 tool_use IDs
+        泄漏到主上下文导致 API 错误。
+        """
         for step in range(self.max_steps):
             messages = self.context.get_messages()
             tools = self.tools.list_for_llm() if hasattr(self.tools, 'list_for_llm') else []
@@ -61,15 +65,33 @@ class SubAgent:
                 return response.content
 
             if response.stop_reason == "tool_use":
-                self.context.add_assistant_message(response.content)
+                # 检查是否包含 tool_use
+                if not isinstance(response.content, list):
+                    continue
 
+                # 执行工具
+                tool_results = []
                 for tool_use in response.content:
-                    tool_name = tool_use["name"]
-                    tool_args = tool_use["input"]
-                    tool_id = tool_use["id"]
+                    if not isinstance(tool_use, dict):
+                        continue
+                    tool_name = tool_use.get("name", "")
+                    tool_args = tool_use.get("input", {})
+                    tool_id = tool_use.get("id", "")
 
+                    # 直接执行工具，不添加到 SubAgent 上下文
+                    # 这样可以避免内部 tool_use IDs 泄漏
                     result = self.tools.execute(tool_name, tool_args)
-                    self.context.add_tool_result(tool_id, result)
+                    tool_results.append({
+                        "tool_use_id": tool_id,
+                        "content": str(result)
+                    })
+
+                # 只将最终文本结果添加到上下文
+                # 不保留内部的 tool_use/tool_result 链
+                if tool_results:
+                    # 将工具结果作为用户消息添加（带格式化的输出）
+                    outputs = "\n".join([r["content"] for r in tool_results])
+                    self.context.add_user(f"[工具执行结果]\n{outputs}")
                 continue
 
         return f"[超时/超限] 任务未能完成"
@@ -148,11 +170,24 @@ class SubAgentPool:
         results = [None] * len(tasks)
         threads = []
 
+        # 使用独立工具副本确保隔离
+        from agent.tools import ToolRegistry
+
         def worker(task: str, index: int):
+            # 每个 SubAgent 使用独立工具副本，确保没有状态泄漏
+            tools = ToolRegistry()
+            for name, tool in self.base_tools.tools.items():
+                tools.register(
+                    name=tool.name,
+                    description=tool.description,
+                    input_schema=tool.input_schema,
+                    handler=tool.handler
+                )
+
             subagent = SubAgent(
                 task=task,
                 llm_adapter=self.llm_adapter,
-                tools=self.base_tools,
+                tools=tools,
                 depth=depth + 1,  # SubAgent depth = 2（如果有的话）
                 timeout=self.timeout  # 使用 pool 的超时设置
             )
