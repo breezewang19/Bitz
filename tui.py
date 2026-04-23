@@ -1,36 +1,76 @@
 #!/usr/bin/env python3
-"""Minimal Agent TUI - 终端对话界面"""
+"""Minimal Agent TUI - Windows 版本"""
 import os
 import sys
 import time
 import threading
+import shutil
 from dotenv import load_dotenv
 
 load_dotenv()
 
 from agent.adapter import LLMAdapter
 from agent.context import Context
-from agent.loop import Agent, create_spawn_tools
+from agent.loop import Agent
 from agent.tools import ToolRegistry
 
 
 # ANSI 颜色码
-class Colors:
+class C:
     RESET = "\033[0m"
     BOLD = "\033[1m"
-    # 用户消息 - 黑底白字
+    # 用户输入 - 黑底白字
     USER_BG = "\033[40m"
     USER_FG = "\033[37m"
-    # 助手消息 - 绿色
-    ASSISTANT = "\033[32m"
+    # 助手回复 - 绿色
+    ASSISTANT_FG = "\033[32m"
     ASSISTANT_BOLD = "\033[1;32m"
     # 工具调用 - 紫色
-    TOOL = "\033[35m"
+    TOOL_FG = "\033[35m"
     TOOL_BOLD = "\033[1;35m"
     # 思考动画 - 青色
-    THINKING = "\033[36m"
+    THINKING_FG = "\033[36m"
     # 错误 - 红色
-    ERROR = "\033[31m"
+    ERROR_FG = "\033[31m"
+    # 标题 - 蓝色
+    TITLE_FG = "\033[34m"
+    TITLE_BOLD = "\033[1;34m"
+    # 分割线 - 灰色
+    SEPARATOR_FG = "\033[90m"
+
+
+def get_width() -> int:
+    """获取终端宽度"""
+    try:
+        return shutil.get_terminal_size().columns
+    except:
+        return 80
+
+
+def separator():
+    """打印分隔线"""
+    width = get_width()
+    print(f"{C.SEPARATOR_FG}{'─' * width}{C.RESET}")
+
+
+def print_banner():
+    """打印启动 Banner"""
+    banner = [
+        f"  {C.TITLE_FG}  /\\_____/\\{C.RESET}",
+        f"  {C.TITLE_FG} /  o   o  \\{C.RESET}",
+        f"  {C.TITLE_FG}( =  ^  y  = ){C.RESET}",
+        f"  {C.TITLE_FG}  \\_____/{C.RESET}  {C.TITLE_BOLD}~ Bitz ~{C.RESET}",
+    ]
+
+    print()
+    for line in banner:
+        print(line)
+    print()
+
+    # Model 信息
+    model = os.getenv("ANTHROPIC_MODEL", "MiniMax-M2.7")
+    print(f"  {C.THINKING_FG}Model:{C.RESET} {model}")
+    print()
 
 
 def create_tools():
@@ -81,46 +121,95 @@ def create_tools():
 
 def thinking_animation(stop_event):
     """后台动画线程"""
-    frames = ["|", "/", "-", "\\"]
+    frames = ["◐", "◓", "◒", "◔"]
     idx = 0
-    prefix = f"{Colors.ASSISTANT}o{Colors.RESET} {Colors.THINKING}Thinking..."
+    prefix = f"{C.THINKING_FG}◉ Thinking{C.RESET} "
     while not stop_event.is_set():
         frame = frames[idx % len(frames)]
-        sys.stdout.write(f"\r{prefix} {Colors.THINKING}{frame}{Colors.RESET}  ")
+        sys.stdout.write(f"\r{prefix}{frame}{C.RESET}  ")
         sys.stdout.flush()
         idx += 1
         time.sleep(0.15)
-    # 彻底清除整行
-    sys.stdout.write("\r" + " " * 50 + "\r")
+    sys.stdout.write("\r" + " " * 30 + "\r")
     sys.stdout.flush()
+
+
+def print_tool_call(name: str, args: dict = None):
+    """打印工具调用"""
+    width = get_width()
+
+    if name == "bash":
+        cmd = args.get('command', '') if args else ''
+        if len(cmd) > width - 20:
+            cmd = cmd[:width - 23] + "..."
+        content = cmd
+    elif name == "read_file":
+        path = args.get('path', '') if args else ''
+        if len(path) > width - 20:
+            path = path[:width - 23] + "..."
+        content = path
+    else:
+        content = ""
+
+    print(f"{C.TOOL_FG}┌─ {C.TOOL_BOLD}[{name}]{C.RESET}{C.TOOL_FG} ─┐{C.RESET}")
+    if content:
+        print(f"{C.TOOL_FG}│{C.RESET} {content}")
+    print(f"{C.TOOL_FG}└{'─' * (width - 3)}┘{C.RESET}")
+
+
+def print_user_input(text: str):
+    """打印用户输入"""
+    width = get_width()
+
+    display_text = text
+    if len(display_text) > width - 4:
+        display_text = display_text[:width - 7] + "..."
+
+    padding = " " * (width - len(display_text) - 1)
+    print(f"{C.USER_BG}{C.USER_FG}{display_text}{padding}{C.RESET}")
+
+
+def print_assistant_response(response: str):
+    """打印助手回复"""
+    width = get_width()
+    lines = response.split("\n")
+
+    for i, line in enumerate(lines):
+        if len(line) > width - 6:
+            line = line[:width - 9] + "..."
+
+        if i == 0:
+            print(f"{C.ASSISTANT_FG}│{C.RESET}  {C.ASSISTANT_BOLD}{line}{C.RESET}")
+        else:
+            print(f"{C.ASSISTANT_FG}│{C.RESET}  {C.ASSISTANT_FG}{line}{C.RESET}")
+
+
+def print_welcome():
+    """打印欢迎信息"""
+    separator()
+    print_banner()
+    separator()
 
 
 def get_input_styled() -> str:
-    """获取用户输入，输入时白底黑字，发送后黑底白字填满整行"""
+    """获取用户输入（Windows 版本）"""
     import msvcrt
 
-    # 打印提示符（白底黑字的小箭头）
-    sys.stdout.write(f"{Colors.USER_FG}> {Colors.RESET} ")
+    sys.stdout.write(f"{C.USER_FG}> {C.RESET} ")
     sys.stdout.flush()
 
-    # 读取字符（不回显，我们自己显示）
     line = ""
     while True:
         try:
             ch = msvcrt.getwch()
             if ch == '\r':
-                # 清除整行，光标移到行首，显示黑底白字后换行
                 sys.stdout.write("\033[2K\r")
-                # 获取终端宽度
                 try:
-                    import shutil
                     width = shutil.get_terminal_size().columns
                 except:
                     width = 80
                 spaces = " " * (width - len(line) - 4)
-                # 显示黑底白字的用户输入
-                sys.stdout.write(f"{Colors.USER_BG}{Colors.USER_FG}>  {line}{spaces}{Colors.RESET}")
-                # sys.stdout.write("\n")  # 换行到下一行
+                sys.stdout.write(f"{C.USER_BG}{C.USER_FG}>  {line}{spaces}{C.RESET}")
                 sys.stdout.flush()
                 break
             elif ch == '\b':
@@ -128,14 +217,14 @@ def get_input_styled() -> str:
                     line = line[:-1]
                     sys.stdout.write('\b \b')
                     sys.stdout.flush()
-            elif ch == '\x03':  # Ctrl+C
+            elif ch == '\x03':
                 raise KeyboardInterrupt
             else:
                 line += ch
                 sys.stdout.write(ch)
                 sys.stdout.flush()
         except KeyboardInterrupt:
-            print(f"\n{Colors.ASSISTANT_BOLD}  o{Colors.RESET} {Colors.ASSISTANT}Bye~{Colors.RESET}")
+            print(f"\n  {C.ASSISTANT_BOLD}o{C.RESET}  {C.ASSISTANT_FG}Bye~{C.RESET}")
             sys.exit(0)
 
     return line
@@ -144,36 +233,25 @@ def get_input_styled() -> str:
 def main():
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     base_url = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
-    model = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+    model_name = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
 
     if not api_key or api_key == "sk-ant-test":
-        print(f"{Colors.ERROR}Error: Please set ANTHROPIC_API_KEY in .env file{Colors.RESET}")
+        print(f"{C.ERROR_FG}Error: Please set ANTHROPIC_API_KEY in .env file{C.RESET}")
         sys.exit(1)
 
-    adapter = LLMAdapter(api_key=api_key, base_url=base_url, model=model)
+    adapter = LLMAdapter(api_key=api_key, base_url=base_url, model=model_name)
     context = Context(
         system_prompt="You are a helpful coding assistant.",
         max_tokens=4096,
         keep_last_n=20
     )
-    # 创建基础工具
-    base_tools = create_tools()
+    tools = create_tools()
 
-    # 创建包含 spawn_subagents 的完整工具集（主 Agent 专用）
-    tools = create_spawn_tools(adapter, base_tools)
-
-    # 保存原始 execute 方法来添加日志
     original_execute = tools.execute
 
     def logged_execute(name, args):
-        sys.stdout.write("\r" + " " * 50 + "\n")  # 清除动画
-        # 显示工具名和参数
-        if name == "bash":
-            print(f"{Colors.TOOL}  o{Colors.RESET} {Colors.TOOL_BOLD}[{name}]{Colors.RESET} {args.get('command', '')}")
-        elif name == "read_file":
-            print(f"{Colors.TOOL}  o{Colors.RESET} {Colors.TOOL_BOLD}[{name}]{Colors.RESET} {args.get('path', '')}")
-        else:
-            print(f"{Colors.TOOL}  o{Colors.RESET} {Colors.TOOL_BOLD}[{name}]{Colors.RESET}")
+        sys.stdout.write("\r" + " " * 30 + "\n")
+        print_tool_call(name, args)
         return original_execute(name, args)
 
     tools.execute = logged_execute
@@ -185,19 +263,13 @@ def main():
         max_steps=20
     )
 
-    print()
-    print(f"{Colors.BOLD}{Colors.ASSISTANT}    /\\{Colors.RESET} {Colors.BOLD}~ Bitz ~{Colors.RESET} {Colors.ASSISTANT}/\\{Colors.RESET}")
-    print(f"{Colors.BOLD}{Colors.ASSISTANT}   (  o  o  ){Colors.RESET}")
-    print(f"{Colors.BOLD}{Colors.ASSISTANT}    \\____/  {Colors.RESET} AI Agent")
-    print()
-    print(f"  {Colors.THINKING}Model:{Colors.RESET} {model}")
-    print()
+    print_welcome()
 
     while True:
         try:
             user_input = get_input_styled()
         except (EOFError, KeyboardInterrupt):
-            print(f"\n{Colors.ASSISTANT_BOLD}  o{Colors.RESET} {Colors.ASSISTANT}Bye~{Colors.RESET}")
+            print(f"\n  {C.ASSISTANT_BOLD}o{C.RESET}  {C.ASSISTANT_FG}Bye~{C.RESET}")
             break
 
         user_input = user_input.strip()
@@ -205,10 +277,14 @@ def main():
             continue
 
         if user_input.lower() in ("quit", "exit"):
-            print(f"\n{Colors.ASSISTANT_BOLD}  o{Colors.RESET} {Colors.ASSISTANT}Bye~{Colors.RESET}")
+            print(f"  {C.ASSISTANT_BOLD}o{C.RESET}  {C.ASSISTANT_FG}Bye~{C.RESET}")
             break
 
-        # 启动等待动画
+        print()
+        separator()
+        print_user_input(user_input)
+        print()
+
         stop_event = threading.Event()
         anim_thread = threading.Thread(target=thinking_animation, args=(stop_event,))
         anim_thread.start()
@@ -219,14 +295,9 @@ def main():
             stop_event.set()
             anim_thread.join()
 
-        print()
-        # 助手回复只有第一行有 o，后续行缩进
-        lines = response.split("\n")
-        for i, line in enumerate(lines):
-            if i == 0:
-                print(f"{Colors.ASSISTANT_BOLD}  o{Colors.RESET} {Colors.ASSISTANT}{line}{Colors.RESET}")
-            else:
-                print(f"{Colors.ASSISTANT}    {line}{Colors.RESET}")
+        separator()
+        print_assistant_response(response)
+        separator()
         print()
 
 
