@@ -1,5 +1,5 @@
 # agent/loop.py
-"""Agent 核心循环"""
+"""Agent 核心循环 - Anthropic 协议"""
 from agent.context import Context
 from agent.adapter import LLMAdapter, LLMResponse
 
@@ -27,6 +27,10 @@ class Agent:
                 return response.content
 
             if response.stop_reason == "tool_use":
+                # 添加 assistant 的 tool_use 消息到 context
+                self.context.add_assistant_message(response.content)
+
+                # 执行工具并添加结果
                 for tool_use in response.content:
                     tool_name = tool_use["name"]
                     tool_args = tool_use["input"]
