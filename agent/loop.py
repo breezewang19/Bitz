@@ -1,7 +1,7 @@
 # agent/loop.py
 """Agent 核心循环 - Anthropic 协议"""
 from agent.context import Context
-from agent.adapter import LLMAdapter, LLMResponse
+from agent.adapter import LLMAdapter, LLMResponse, LLMError
 
 
 class Agent:
@@ -21,7 +21,10 @@ class Agent:
             messages = self.context.get_messages()
             tools = self.tools.list_for_llm() if hasattr(self.tools, 'list_for_llm') else []
 
-            response = self.llm_adapter.chat(messages, tools)
+            try:
+                response = self.llm_adapter.chat(messages, tools)
+            except LLMError as e:
+                return f"[LLM Error] {e}"
 
             if response.stop_reason == "end_turn":
                 return response.content

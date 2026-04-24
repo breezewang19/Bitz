@@ -1,6 +1,7 @@
 # agent/adapter.py
 """LLM 适配器 - Anthropic 协议"""
 import json
+import time
 from dataclasses import dataclass
 from typing import Any
 import anthropic
@@ -13,6 +14,11 @@ class LLMResponse:
     stop_reason: str
 
 
+class LLMError(Exception):
+    """LLM 请求错误"""
+    pass
+
+
 class LLMAdapter:
     """LLM 适配器（Anthropic 协议）"""
 
@@ -22,8 +28,24 @@ class LLMAdapter:
         self.model = model
         self.api_url = f"{base_url}/v1/messages"
 
-    def chat(self, messages: list[dict], tools: list[dict]) -> LLMResponse:
-        """发送请求到 LLM（Anthropic 协议）"""
+    def chat(self, messages: list[dict], tools: list[dict], max_retries: int = 3) -> LLMResponse:
+        """发送请求到 LLM（Anthropic 协议），带重试"""
+        for attempt in range(max_retries):
+            try:
+                return self._chat_once(messages, tools)
+            except (anthropic.OverloadedError, anthropic.RateLimitError, anthropic.APITimeoutError) as e:
+                if attempt < max_retries - 1:
+                    wait = 2 ** attempt
+                    time.sleep(wait)
+                else:
+                    raise LLMError(f"API 请求失败（重试 {max_retries} 次后）: {e}")
+            except anthropic.APIConnectionError as e:
+                raise LLMError(f"API 连接失败: {e}")
+            except anthropic.BadRequestError as e:
+                raise LLMError(f"请求参数错误: {e}")
+
+    def _chat_once(self, messages: list[dict], tools: list[dict]) -> LLMResponse:
+        """单次请求 LLM"""
         client = anthropic.Anthropic(api_key=self.api_key, base_url=self.base_url)
 
         # 分离 system prompt 和对话消息
