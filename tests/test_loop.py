@@ -98,7 +98,7 @@ def test_agent_run_tool_call():
     assert result == "Tool returned: hello"
 
     # Check tool was executed
-    mock_tools.execute.assert_called_once_with("echo", {"x": "hello"})
+    mock_tools.execute.assert_called_once_with("echo", {"x": "hello"}, confirmed=False, tool_id="toolu_01")
 
     # Check context has user message, assistant tool_use, and tool result (Anthropic format)
     assert len(ctx.messages) == 3

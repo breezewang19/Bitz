@@ -104,7 +104,8 @@ def create_tools() -> ToolRegistry:
             "properties": {"command": {"type": "string"}},
             "required": ["command"]
         },
-        handler=bash_handler
+        handler=bash_handler,
+        dangerous=True
     )
 
     tools.register(
@@ -129,7 +130,8 @@ def create_tools() -> ToolRegistry:
             },
             "required": ["path", "content"]
         },
-        handler=write_file_handler
+        handler=write_file_handler,
+        dangerous=True
     )
 
     tools.register(
