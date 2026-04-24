@@ -15,7 +15,7 @@ load_dotenv()
 from agent.adapter import LLMAdapter
 from agent.context import Context
 from agent.loop import Agent
-from agent.tools import ToolRegistry
+from agent.builtin_tools import create_tools
 
 
 class C:
@@ -61,110 +61,63 @@ def get_width() -> int:
 
 
 def print_banner():
-    """打印彩虹猫 banner"""
+    """打印彩虹猫 banner - 从左到右波浪点亮动效"""
+    # 小猫每行定义: (颜色, 内容, 后缀)
+    cat_lines = [
+        ("\033[31m", "  /\\_____/\\", ""),
+        ("\033[33m", " /  o   o  \\", ""),
+        ("\033[32m", "( =  ^  y  = )", ""),
+        ("\033[34m", "  \\_____/  ", f"  ~ Bitz ~"),
+    ]
+
     print()
-    print(f"  \033[31m  /\\_____/\\{C.RESET}")
-    print(f"  \033[33m /  o   o  \\{C.RESET}")
-    print(f"  \033[32m( =  ^  y  = ){C.RESET}")
-    print(f"  \033[34m  \\_____/{C.RESET}  {C.TITLE_BOLD}~ Bitz ~{C.RESET}")
-    print()
+
+    # 先以暗色打印全部行
+    for color, text, suffix in cat_lines:
+        print(f"  {C.DIM}{color}{text}{C.RESET}{C.DIM}{suffix}{C.RESET}")
+
+    # 光标上移 4 行回到起点
+    sys.stdout.write("\033[4A")
+    sys.stdout.flush()
+
+    # 从左到右逐列点亮，每帧多亮 2 列
+    max_len = max(len(text) + len(suffix) for _, text, suffix in cat_lines)
+    for lit in range(2, max_len + 2, 2):
+        for color, text, suffix in cat_lines:
+            combined = text + suffix
+            bright = combined[:lit]
+            dim = combined[lit:]
+            # 后缀部分用 TITLE_BOLD 色，小猫部分用原色
+            bright_text = bright[:len(text)]
+            bright_suffix = bright[len(text):]
+            dim_text = dim[:max(0, len(text) - lit)]
+            dim_suffix = dim[max(0, len(text) - lit):]
+            out = f"  {C.BOLD}{color}{bright_text}{C.RESET}"
+            if dim_text:
+                out += f"{C.DIM}{color}{dim_text}{C.RESET}"
+            if bright_suffix:
+                out += f"{C.BOLD}{C.TITLE_BOLD}{bright_suffix}{C.RESET}"
+            if dim_suffix:
+                out += f"{C.DIM}{dim_suffix}{C.RESET}"
+            sys.stdout.write(f"\r{out}\033[K\n")
+        sys.stdout.flush()
+        time.sleep(0.1)
+        # 光标上移 4 行回到起点，准备下一帧
+        sys.stdout.write("\033[4A")
+        sys.stdout.flush()
+
+    # 最终光标移到最底行下方
+    sys.stdout.write("\033[4B")
+    sys.stdout.flush()
+
     model = os.getenv("ANTHROPIC_MODEL", "MiniMax-M2.7")
     print(f"  {C.THINKING_FG}Model:{C.RESET} {model}")
     print()
 
 
-def create_tools():
-    """创建工具注册表"""
-    tools = ToolRegistry()
-
-    def bash_handler(command: str) -> str:
-        import subprocess
-        try:
-            result = subprocess.run(
-                command, shell=True, capture_output=True, text=True, timeout=30
-            )
-            return result.stdout or result.stderr or "(no output)"
-        except Exception as e:
-            return f"Error: {e}"
-
-    def read_file_handler(path: str) -> str:
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                return f.read()
-        except Exception as e:
-            return f"Error: {e}"
-
-    def write_file_handler(path: str, content: str) -> str:
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(content)
-            return f"OK: wrote {len(content)} chars to {path}"
-        except Exception as e:
-            return f"Error: {e}"
-
-    def glob_handler(pattern: str) -> str:
-        import glob
-        try:
-            matches = glob.glob(pattern, recursive=True)
-            if not matches:
-                return "No files found"
-            return "\n".join(matches)
-        except Exception as e:
-            return f"Error: {e}"
-
-    tools.register(
-        name="bash",
-        description="Execute a bash command",
-        input_schema={
-            "type": "object",
-            "properties": {"command": {"type": "string"}},
-            "required": ["command"]
-        },
-        handler=bash_handler
-    )
-
-    tools.register(
-        name="read_file",
-        description="Read file contents",
-        input_schema={
-            "type": "object",
-            "properties": {"path": {"type": "string"}},
-            "required": ["path"]
-        },
-        handler=read_file_handler
-    )
-
-    tools.register(
-        name="write_file",
-        description="Write content to a file",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "path": {"type": "string"},
-                "content": {"type": "string"}
-            },
-            "required": ["path", "content"]
-        },
-        handler=write_file_handler
-    )
-
-    tools.register(
-        name="glob",
-        description="Search files by pattern (supports **/*.py etc.)",
-        input_schema={
-            "type": "object",
-            "properties": {"pattern": {"type": "string"}},
-            "required": ["pattern"]
-        },
-        handler=glob_handler
-    )
-
-    return tools
-
-
 def thinking_animation(stop_event):
     """后台思考动画"""
-    frames = ["◐", "◓", "◒", "◔"]
+    frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
     idx = 0
     prefix = f"  {C.THINKING_FG}Thinking{C.RESET} "
     while not stop_event.is_set():
@@ -186,8 +139,17 @@ def print_tool_call(name: str, args: dict = None):
     elif name == "write_file":
         path = args.get('path', '') if args else ''
         content = f"{path} ({len(args.get('content', ''))} chars)" if args else ''
+    elif name == "edit_file":
+        path = args.get('path', '') if args else ''
+        content = f"{path}" if args else ''
     elif name == "glob":
         content = args.get('pattern', '') if args else ''
+    elif name == "grep":
+        pattern = args.get('pattern', '') if args else ''
+        path = args.get('path', '.') if args else '.'
+        content = f"{pattern} in {path}"
+    elif name == "fetch":
+        content = args.get('url', '') if args else ''
     else:
         content = ""
 
