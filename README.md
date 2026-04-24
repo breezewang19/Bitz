@@ -24,24 +24,27 @@ python tui.py
 2. **工具注册** - 动态注册和调用工具
 3. **LLM 适配** - Anthropic 协议适配
 4. **上下文管理** - 会话历史和消息截断
-5. **TUI 开发** - 终端界面彩色输出
+5. **TUI 开发** - 跨平台终端界面（core + 平台兼容层）
 
 ## 项目结构
 
 ```
 Bitz/
-├── agent/           # 核心模块
-│   ├── adapter.py  # LLM 适配器（Anthropic 协议）
-│   ├── context.py   # 会话上下文
-│   ├── loop.py     # Agent 循环
-│   └── tools.py    # 工具注册表
-├── tests/           # 单元测试
-├── learning/        # 学习资料
+├── agent/            # 核心模块
+│   ├── adapter.py   # LLM 适配器（Anthropic 协议 + 重试）
+│   ├── context.py   # 会话上下文（Anthropic 格式）
+│   ├── loop.py      # Agent 循环（ReAct 模式）
+│   └── tools.py     # 工具注册表
+├── tests/            # 单元测试
+├── learning/         # 学习资料
 │   ├── 01-agent-frameworks-overview.md
 │   └── 02-minimal-agent-design.md
-├── tui.py           # 终端界面入口
-├── .env             # API 配置
-└── requirements.txt # 依赖
+├── tui_core.py       # TUI 共性逻辑（颜色、banner、动画、输出、主循环）
+├── tui_win.py        # Windows 兼容层（msvcrt 输入）
+├── tui_mac.py        # macOS/Linux 兼容层（termios 输入）
+├── tui.py            # 入口（自动检测平台）
+├── .env              # API 配置
+└── requirements.txt  # 依赖
 ```
 
 ## 内置工具
@@ -50,6 +53,8 @@ Bitz/
 |------|------|------|
 | `bash` | `command: str` | 执行 shell 命令 |
 | `read_file` | `path: str` | 读取文件内容 |
+| `write_file` | `path: str, content: str` | 写入文件内容 |
+| `glob` | `pattern: str` | 搜索文件（支持 `**/*.py` 等） |
 
 ## 测试
 

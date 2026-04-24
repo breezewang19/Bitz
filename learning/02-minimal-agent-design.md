@@ -4,7 +4,7 @@
 
 本书面向想理解 Agent 本质并动手实现的开发者。
 
-我们会从头开始，先讲清概念，再逐步构建一个最小 Agent 循环。代码量控制在 200 行以内，核心逻辑一览无余。
+我们会从头开始，先讲清概念，再逐步构建一个最小 Agent 循环。代码量控制在 1000 行以内，核心逻辑一览无余。
 
 **前置知识**：Python 基础，了解 LLM API 调用（OpenAI/Anthropic 风格）。
 
@@ -170,11 +170,6 @@ LLM: "我需要统计行数"
 [第 3 轮]
 LLM: "文件 /tmp/test.txt 共有 100 行。"
      stop_reason = "end_turn"           ← 完成，输出最终回复
-```
-
-[第 3 轮]
-LLM: "文件 /tmp/test.txt 共有 100 行。"
-     stop_reason = "end_turn"
 ```
 
 ### 2.4 为什么 LLM 能输出正确格式？
@@ -371,14 +366,16 @@ async def compress_history(messages, llm):
 
 ```python
 """
-最小 Agent 循环实现
+最小 Agent 循环实现（Anthropic 协议）
 约 180 行代码，核心逻辑一览无余
 """
 
 import json
 import os
-from dataclasses import dataclass, field      # dataclass: 简洁定义数据类
-from typing import Callable                   # Callable: 类型提示，表示可调用对象
+import time
+from dataclasses import dataclass, field
+from typing import Callable
+import anthropic
 
 # ============================================================
 # 1. 工具注册表 (ToolRegistry)
@@ -397,9 +394,8 @@ class ToolRegistry:
     """工具注册表：管理所有工具的注册和执行"""
 
     def __init__(self):
-        self.tools: dict[str, Tool] = {}    # 用字典存储，key 是工具名
+        self.tools: dict[str, Tool] = {}
 
-    # 注册一个新工具
     def register(self, name: str, description: str,
                  input_schema: dict, handler: Callable):
         self.tools[name] = Tool(
@@ -409,27 +405,21 @@ class ToolRegistry:
             handler=handler
         )
 
-    # 执行工具：LLM 说要调用的工具，在这里真正执行
     def execute(self, name: str, args: dict) -> str:
-        # 找不到工具？返回错误
         if name not in self.tools:
             return f"Error: Unknown tool '{name}'"
         try:
-            # 调用注册时传入的处理函数，传入参数
-            # handler 是 lambda 或普通函数，比如: lambda path: open(path).read()
             result = self.tools[name].handler(**args)
-            return str(result)              # 确保返回字符串
+            return str(result)
         except Exception as e:
-            return f"Error executing {name}: {e}"   # 执行出错也返回字符串
+            return f"Error executing {name}: {e}"
 
-    # 返回给 LLM 的工具定义列表
-    # 这个列表会每次请求时传给 LLM
     def list_for_llm(self) -> list[dict]:
         return [
             {
-                "name": t.name,                               # 工具名
-                "description": t.description,                # 描述
-                "input_schema": t.input_schema                # 参数规范
+                "name": t.name,
+                "description": t.description,
+                "input_schema": t.input_schema
             }
             for t in self.tools.values()
         ]
@@ -437,8 +427,8 @@ class ToolRegistry:
 # ============================================================
 # 2. LLM 适配层 (LLMAdapter)
 # ============================================================
-# 职责：封装不同 LLM 的 API 差异，提供统一接口
-# 这里用 OpenAI 风格（国产模型通常兼容）
+# 职责：封装 Anthropic SDK，提供统一接口
+# 支持 API 重试和错误兜底
 
 @dataclass
 class LLMResponse:
@@ -446,121 +436,136 @@ class LLMResponse:
     content: str | list      # 响应内容：字符串（普通回复）或列表（tool_use 块）
     stop_reason: str         # 停止原因：决定下一步该做什么
 
+class LLMError(Exception):
+    """LLM 请求错误"""
+    pass
+
 class LLMAdapter:
-    """LLM 适配器：对接 OpenAI 兼容 API"""
+    """LLM 适配器：对接 Anthropic 协议"""
 
     def __init__(self, api_key: str, base_url: str, model: str):
-        self.api_key = api_key          # API 密钥
-        self.base_url = base_url        # API 地址（支持国产模型）
-        self.model = model              # 模型名称
+        self.api_key = api_key
+        self.base_url = base_url
+        self.model = model
 
-    def chat(self, messages: list[dict], tools: list[dict]) -> LLMResponse:
-        """
-        发送请求到 LLM，返回标准化响应
+    def chat(self, messages: list[dict], tools: list[dict], max_retries: int = 3) -> LLMResponse:
+        """发送请求到 LLM，带重试"""
+        for attempt in range(max_retries):
+            try:
+                return self._chat_once(messages, tools)
+            except (anthropic.OverloadedError, anthropic.RateLimitError,
+                    anthropic.APITimeoutError) as e:
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                else:
+                    raise LLMError(f"API 请求失败（重试 {max_retries} 次后）: {e}")
+            except anthropic.APIConnectionError as e:
+                raise LLMError(f"API 连接失败: {e}")
+            except anthropic.BadRequestError as e:
+                raise LLMError(f"请求参数错误: {e}")
 
-        参数:
-            messages: 对话历史，包含之前的 tool_use 和 tool_result
-            tools: 当前可用的工具定义列表
+    def _chat_once(self, messages: list[dict], tools: list[dict]) -> LLMResponse:
+        """单次请求 LLM"""
+        client = anthropic.Anthropic(api_key=self.api_key, base_url=self.base_url)
 
-        返回:
-            LLMResponse: 统一格式的响应
-        """
-        import openai
-        # 创建 OpenAI 客户端（兼容国产模型）
-        client = openai.OpenAI(api_key=self.api_key, base_url=self.base_url)
+        # 分离 system prompt 和对话消息
+        system_prompt = ""
+        conversation_messages = []
+        for msg in messages:
+            if msg["role"] == "system":
+                system_prompt = msg["content"]
+            else:
+                conversation_messages.append(msg)
 
-        # 构建请求
         kwargs = {
             "model": self.model,
-            "messages": messages,
+            "messages": conversation_messages,
+            "max_tokens": 4096,
         }
-
-        # 如果有工具，添加工具定义
-        # tool_choice="auto" 让 LLM 自己决定要不要调用工具
+        if system_prompt:
+            kwargs["system"] = system_prompt
         if tools:
             kwargs["tools"] = tools
-            kwargs["tool_choice"] = "auto"
 
-        # 发起请求
-        response = client.chat.completions.create(**kwargs)
+        response = client.messages.create(**kwargs)
 
         # 解析响应
-        choice = response.choices[0]
-        message = choice.message
+        if response.stop_reason == "end_turn":
+            text_content = ""
+            for block in response.content:
+                if block.type == "text":
+                    text_content += block.text
+            return LLMResponse(content=text_content, stop_reason="end_turn")
 
-        # LLM 返回了 tool_calls？说明它想调用工具
-        if hasattr(message, 'tool_calls') and message.tool_calls:
+        if response.stop_reason == "tool_use":
             blocks = []
-            for tc in message.tool_calls:
-                # tc 是 OpenAI 的 tool_call 对象
-                # 我们把它转成统一格式
-                blocks.append({
-                    "type": "tool_use",                    # 块类型
-                    "id": tc.id,                            # 唯一 ID，用于配对结果
-                    "name": tc.function.name,               # 工具名
-                    "input": json.loads(tc.function.arguments)  # 参数（JSON 字符串转 dict）
-                })
-            # 告诉 Agent: LLM 请求调用工具
+            for block in response.content:
+                if block.type == "tool_use":
+                    blocks.append({
+                        "type": "tool_use",
+                        "id": block.id,
+                        "name": block.name,
+                        "input": block.input
+                    })
             return LLMResponse(content=blocks, stop_reason="tool_use")
 
-        # 普通文本回复，Agent 可以直接展示给用户
-        return LLMResponse(content=message.content or "", stop_reason="end_turn")
+        # 其他情况
+        text_content = ""
+        for block in response.content:
+            if block.type == "text":
+                text_content += block.text
+        return LLMResponse(content=text_content, stop_reason=response.stop_reason)
 
 # ============================================================
 # 3. 会话上下文 (Context)
 # ============================================================
 # 职责：管理对话历史，处理 token 限制
-# 重要：LLM 没有记忆，上下文全靠这里管理
+# Anthropic 协议：tool_result 的 role 是 "user"
 
-@dataclass
 class Context:
     """会话上下文：管理对话历史"""
 
-    system_prompt: str                    # 系统提示：设定 Agent 身份和行为
-    messages: list[dict] = field(default_factory=list)  # 对话历史
-    max_tokens: int = 16000              # Token 限制（软限制）
-    keep_last_n: int = 20               # 保留最近 N 条消息
+    def __init__(self, system_prompt: str = "", max_tokens: int = 4096, keep_last_n: int = 10):
+        self.system_prompt = system_prompt
+        self.messages: list[dict] = []
+        self.max_tokens = max_tokens
+        self.keep_last_n = keep_last_n
 
     def add_user(self, content: str):
         """添加用户消息"""
         self.messages.append({"role": "user", "content": content})
-        self._trim()                     # 检查是否超限
+        self._trim()
 
-    def add_assistant(self, content: str | list):
-        """添加助手消息（通常是最终回复）"""
+    def add_assistant_message(self, content: list):
+        """添加 assistant 消息（包含 tool_use blocks）"""
         self.messages.append({"role": "assistant", "content": content})
+        self._trim()
 
     def add_tool_result(self, tool_use_id: str, content: str):
         """
         添加工具执行结果
-        重要：role 是 "user"，不是 "assistant"！这是协议规定
+        重要：role 是 "user"，不是 "assistant"！这是 Anthropic 协议规定
         """
-        # 工具结果可能很长，截断一下节省 token
-        if len(content) > 3000:
-            content = f"[结果截断]\n{content[-1000:]}"
-
         self.messages.append({
-            "role": "user",                          # 必须是 user
+            "role": "user",
             "content": [{
-                "type": "tool_result",                # 块类型
-                "tool_use_id": tool_use_id,           # 必须与 LLM 生成的 ID 匹配
-                "content": content                     # 执行结果
+                "type": "tool_result",
+                "tool_use_id": tool_use_id,
+                "content": content
             }]
         })
         self._trim()
 
     def _trim(self):
-        """裁剪消息，保持在限制内"""
-        # 简单策略：从最老的消息开始删
-        while len(self.messages) > self.keep_last_n:
-            self.messages.pop(0)
+        """保持消息数量不超过 keep_last_n"""
+        if len(self.messages) > self.keep_last_n:
+            self.messages = self.messages[-self.keep_last_n:]
 
     def get_messages(self) -> list[dict]:
-        """
-        获取完整的消息列表（包含 system prompt）
-        每次请求 LLM 时调用
-        """
-        return [{"role": "system", "content": self.system_prompt}, *self.messages]
+        """返回完整消息列表（system 作为独立条目）"""
+        msgs = [{"role": "system", "content": self.system_prompt}]
+        msgs.extend(self.messages)
+        return msgs
 
 # ============================================================
 # 4. Agent 循环 (Agent)
@@ -570,11 +575,10 @@ class Context:
 class Agent:
     """Agent：循环控制器"""
 
-    def __init__(self, llm_adapter: LLMAdapter, tools: ToolRegistry,
-                 system_prompt: str, max_steps: int = 10):
-        self.llm = llm_adapter              # LLM 适配器
+    def __init__(self, llm_adapter: LLMAdapter, tools, context: Context, max_steps: int = 10):
+        self.llm_adapter = llm_adapter      # LLM 适配器
         self.tools = tools                  # 工具注册表
-        self.context = Context(system_prompt=system_prompt)  # 上下文
+        self.context = context              # 上下文（外部传入）
         self.max_steps = max_steps          # 最大循环次数，防止死循环
 
     def run(self, user_input: str) -> str:
@@ -593,50 +597,43 @@ class Agent:
 
         # 第二步：循环
         for step in range(self.max_steps):
-            # 2.1 调用 LLM
-            # 每次调用都要传：消息历史 + 工具定义
-            response = self.llm.chat(
-                messages=self.context.get_messages(),
-                tools=self.tools.list_for_llm()
-            )
+            messages = self.context.get_messages()
+            tools = self.tools.list_for_llm() if hasattr(self.tools, 'list_for_llm') else []
 
-            # 2.2 处理 LLM 响应
+            try:
+                response = self.llm_adapter.chat(messages, tools)
+            except LLMError as e:
+                return f"[LLM Error] {e}"
+
+            if response.stop_reason == "end_turn":
+                return response.content
+
             if response.stop_reason == "tool_use":
-                # LLM 请求调用工具
-                blocks = response.content if isinstance(response.content, list) else []
+                # 添加 assistant 的 tool_use 消息到上下文
+                self.context.add_assistant_message(response.content)
 
-                # 遍历所有工具调用（可能一次返回多个）
-                for block in blocks:
-                    if block["type"] == "tool_use":
-                        # 执行工具
-                        result = self.tools.execute(
-                            block["name"],    # 工具名
-                            block["input"]    # 参数字典
-                        )
-                        # 把执行结果加入上下文
-                        self.context.add_tool_result(block["id"], result)
+                # 执行工具并添加结果
+                for tool_use in response.content:
+                    tool_name = tool_use["name"]
+                    tool_args = tool_use["input"]
+                    tool_id = tool_use["id"]
 
-                # 工具执行完了，继续循环，让 LLM 看结果
+                    result = self.tools.execute(tool_name, tool_args)
+                    self.context.add_tool_result(tool_id, result)
+                continue
 
-            else:
-                # LLM 返回了最终回复
-                final = response.content
-                # content 可能是字符串或列表，转成字符串返回
-                return final if isinstance(final, str) else final[0].get("text", "")
-
-        # 超过最大循环次数，说明任务可能卡住了
-        return "Error: Max steps exceeded"
+        return f"Error: Exceeded max_steps ({self.max_steps})"
 
 # ============================================================
 # 5. 使用示例
 # ============================================================
 
 def main():
-    # 创建 LLM 适配器（兼容 OpenAI 协议的国产模型）
+    # 创建 LLM 适配器（Anthropic 协议）
     llm = LLMAdapter(
-        api_key=os.getenv("API_KEY", "your-api-key"),
-        base_url=os.getenv("BASE_URL", "https://api.openai.com/v1"),
-        model="gpt-4o"
+        api_key=os.getenv("ANTHROPIC_API_KEY", "your-api-key"),
+        base_url=os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+        model=os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
     )
 
     # 创建工具注册表
@@ -667,16 +664,15 @@ def main():
         ).stdout
     )
 
-    # 定义系统提示
-    system = """你是一个有用的助手。
-你有以下工具可用：
-- read_file: 读取文件
-- bash: 执行 shell 命令
-
-当用户要求执行操作时，先思考需要哪些步骤，然后调用相应工具。"""
+    # 创建上下文（外部传入，Agent 不自己创建）
+    context = Context(
+        system_prompt="You are a helpful coding assistant.",
+        max_tokens=4096,
+        keep_last_n=20
+    )
 
     # 创建 Agent
-    agent = Agent(llm, tools, system)
+    agent = Agent(llm, tools, context)
 
     # 运行
     result = agent.run("帮我读取 /tmp/test.txt 并统计行数")
@@ -690,15 +686,16 @@ if __name__ == "__main__":
 
 **ToolRegistry**：管理工具定义和执行。关键方法是 `list_for_llm()`，返回符合协议的工具列表。
 
-**LLMAdapter**：封装模型调用。处理 OpenAI 风格的 tool_calls 响应格式。
+**LLMAdapter**：封装 Anthropic SDK 调用。支持 API 重试（指数退避）和错误兜底（`LLMError`）。
 
-**Context**：管理会话状态。关键是 `add_tool_result()`，它把工具结果伪装成 user 消息追加到历史。
+**Context**：管理会话状态。关键方法是 `add_assistant_message()`（添加 tool_use 消息）和 `add_tool_result()`（添加工具结果，role 为 user）。
 
 **Agent**：核心循环。`run()` 方法在一个 for 循环中：
 1. 调用 LLM
 2. 检查 stop_reason
-3. 如果是 tool_use，执行工具并追加结果，继续循环
+3. 如果是 tool_use，添加 assistant 消息到上下文，执行工具并追加结果，继续循环
 4. 如果是 end_turn，返回结果
+5. 如果 LLM 报错，返回 `[LLM Error]` 提示
 
 ---
 
@@ -861,20 +858,9 @@ class ContextGuard:
         return early_summary + preserved
 ```
 
-**为什么这样做？**
-- 不丢失任何关键信息
-- 多轮压缩后仍保持上下文连贯
-- 用户无感知（静默操作）
-
-        # 阶段 3：早期消息用 LLM 摘要
-        early_summary = self.summarize_early(messages[:-preserved])
-
-        return early_summary + preserved
-```
-
 关键点：
 - 不丢失关键信息（通过 memory flush 持久化）
-- 用户无感知（NO_REPLY 标记）
+- 用户无感知（静默操作）
 - 多轮压缩后仍保持上下文连贯性
 
 ---
@@ -903,7 +889,7 @@ class ContextGuard:
 - Tool Calling 协议（tool_use 解析、tool_result 配对）
 - ReAct 循环控制（while + max_steps）
 - Schema 验证
-- 错误处理与恢复
+- 错误处理与恢复（API 重试、LLMError 兜底）
 - 上下文窗口管理
 
 **进阶技能**：
