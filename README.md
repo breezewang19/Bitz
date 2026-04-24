@@ -54,7 +54,10 @@ Bitz/
 | `bash` | `command: str` | 执行 shell 命令 |
 | `read_file` | `path: str` | 读取文件内容 |
 | `write_file` | `path: str, content: str` | 写入文件内容 |
+| `edit_file` | `path, old_string, new_string` | 替换文件中的唯一字符串 |
 | `glob` | `pattern: str` | 搜索文件（支持 `**/*.py` 等） |
+| `grep` | `pattern, path?, include?` | 搜索文件内容（支持正则） |
+| `fetch` | `url: str` | 获取网页内容（自动清理 HTML 标签） |
 
 ## 测试
 
