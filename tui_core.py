@@ -61,40 +61,72 @@ def get_width() -> int:
 
 
 def print_banner():
-    """打印彩虹猫 banner - 从左到右波浪点亮动效"""
-    # 小猫每行定义: (颜色, 内容, 后缀)
+    """打印彩虹猫 banner - 从左到右彩虹渐变点亮动效"""
+    # 小猫每行定义: (内容, 后缀)
     cat_lines = [
-        ("\033[31m", "  /\\_____/\\", ""),
-        ("\033[33m", " /  o   o  \\", ""),
-        ("\033[32m", "( =  ^  y  = )", ""),
-        ("\033[34m", "  \\_____/  ", f"  ~ Bitz ~"),
+        ("  /\\_____/\\", ""),
+        (" /  o   o  \\", ""),
+        ("( =  w  y  = )", ""),
+        ("  \\_____/  ", f"  ~ Bitz ~"),
     ]
+
+    # 彩虹色序列：从左到右渐变
+    rainbow = [
+        "\033[31m", "\033[31m",  # 红
+        "\033[33m", "\033[33m",  # 黄
+        "\033[32m", "\033[32m",  # 绿
+        "\033[36m", "\033[36m",  # 青
+        "\033[34m", "\033[34m",  # 蓝
+        "\033[35m", "\033[35m",  # 紫
+        "\033[31m", "\033[31m",  # 红（循环）
+        "\033[33m", "\033[33m",  # 黄
+        "\033[32m", "\033[32m",  # 绿
+        "\033[36m", "\033[36m",  # 青
+        "\033[34m", "\033[34m",  # 蓝
+        "\033[35m", "\033[35m",  # 紫
+        "\033[31m", "\033[31m",  # 红
+    ]
+
+    def colorize(text, dim=False):
+        """给文本上彩虹色"""
+        result = ""
+        for i, ch in enumerate(text):
+            c = rainbow[i % len(rainbow)]
+            if dim:
+                result += f"{C.DIM}{c}{ch}{C.RESET}"
+            else:
+                result += f"{C.BOLD}{c}{ch}{C.RESET}"
+        return result
 
     print()
 
     # 先以暗色打印全部行
-    for color, text, suffix in cat_lines:
-        print(f"  {C.DIM}{color}{text}{C.RESET}{C.DIM}{suffix}{C.RESET}")
+    for text, suffix in cat_lines:
+        out = f"  {colorize(text, dim=True)}"
+        if suffix:
+            out += f"{C.DIM}{suffix}{C.RESET}"
+        print(out)
 
     # 光标上移 4 行回到起点
     sys.stdout.write("\033[4A")
     sys.stdout.flush()
 
-    # 从左到右逐列点亮，每帧多亮 2 列
-    max_len = max(len(text) + len(suffix) for _, text, suffix in cat_lines)
+    # 从左到右逐列点亮
+    max_len = max(len(text) + len(suffix) for text, suffix in cat_lines)
     for lit in range(2, max_len + 2, 2):
-        for color, text, suffix in cat_lines:
+        for text, suffix in cat_lines:
             combined = text + suffix
-            bright = combined[:lit]
-            dim = combined[lit:]
-            # 后缀部分用 TITLE_BOLD 色，小猫部分用原色
-            bright_text = bright[:len(text)]
-            bright_suffix = bright[len(text):]
-            dim_text = dim[:max(0, len(text) - lit)]
-            dim_suffix = dim[max(0, len(text) - lit):]
-            out = f"  {C.BOLD}{color}{bright_text}{C.RESET}"
+            bright_part = combined[:lit]
+            dim_part = combined[lit:]
+            # 分离小猫文本和后缀
+            bright_text = bright_part[:len(text)]
+            bright_suffix = bright_part[len(text):]
+            dim_text = dim_part[:max(0, len(text) - lit)]
+            dim_suffix = dim_part[max(0, len(text) - lit):]
+
+            out = f"  {colorize(bright_text)}"
             if dim_text:
-                out += f"{C.DIM}{color}{dim_text}{C.RESET}"
+                out += colorize(dim_text, dim=True)
             if bright_suffix:
                 out += f"{C.BOLD}{C.TITLE_BOLD}{bright_suffix}{C.RESET}"
             if dim_suffix:
@@ -102,11 +134,9 @@ def print_banner():
             sys.stdout.write(f"\r{out}\033[K\n")
         sys.stdout.flush()
         time.sleep(0.1)
-        # 光标上移 4 行回到起点，准备下一帧
         sys.stdout.write("\033[4A")
         sys.stdout.flush()
 
-    # 最终光标移到最底行下方
     sys.stdout.write("\033[4B")
     sys.stdout.flush()
 
@@ -115,12 +145,46 @@ def print_banner():
     print()
 
 
-def thinking_animation(stop_event):
-    """后台思考动画"""
+def print_goodbye():
+    """彩虹波浪 Goodbye~ 动效"""
+    # Goodbye~ 用彩虹色逐字点亮
+    text = "Goodbye~"
+    colors = ["\033[31m", "\033[33m", "\033[32m", "\033[36m", "\033[34m", "\033[35m", "\033[31m", "\033[33m", "\033[32m"]
+
+    # 先暗色铺底
+    dim_line = "  "
+    for i, ch in enumerate(text):
+        dim_line += f"{C.DIM}{colors[i]}{ch}{C.RESET}"
+    print(dim_line)
+
+    # 光标上移 1 行
+    sys.stdout.write("\033[1A")
+    sys.stdout.flush()
+
+    # 从左到右逐字点亮
+    for lit in range(1, len(text) + 1):
+        out = "  "
+        for i, ch in enumerate(text):
+            if i < lit:
+                out += f"{C.BOLD}{colors[i]}{ch}{C.RESET}"
+            else:
+                out += f"{C.DIM}{colors[i]}{ch}{C.RESET}"
+        sys.stdout.write(f"\r{out}\033[K")
+        sys.stdout.flush()
+        time.sleep(0.06)
+
+    print()
+
+
+def thinking_animation(stop_event, cancel_event=None):
+    """后台思考动画，cancel_event 触发后切换为取消中动画"""
     frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
     idx = 0
-    prefix = f"  {C.THINKING_FG}Thinking{C.RESET} "
     while not stop_event.is_set():
+        if cancel_event and cancel_event.is_set():
+            prefix = f"  {C.ERROR_FG}[ESC] Canceling{C.RESET} "
+        else:
+            prefix = f"  {C.THINKING_FG}Thinking{C.RESET} "
         frame = frames[idx % len(frames)]
         sys.stdout.write(f"\r{prefix}{C.THINKING_FG}{frame}{C.RESET}  ")
         sys.stdout.flush()
@@ -171,6 +235,22 @@ def print_assistant_response(response: str):
             print(f"  {C.ASSISTANT_FG}{line}{C.RESET}")
 
 
+def esc_listener(cancel_event: threading.Event, stop_event: threading.Event):
+    """后台监听 ESC 键，按下后设置 cancel_event"""
+    import msvcrt
+    while not stop_event.is_set():
+        if msvcrt.kbhit():
+            ch = msvcrt.getwch()
+            if ch == '\x1b':
+                # 可能是 ESC 单键，也可能是 ANSI 序列开头
+                if msvcrt.kbhit():
+                    # 有后续字符 → 方向键等，不是 ESC
+                    continue
+                cancel_event.set()
+                return
+        stop_event.wait(0.05)
+
+
 def run_agent(get_input_fn: Callable[[list[str]], str]):
     """主循环 - 接收平台特定的输入函数"""
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
@@ -213,7 +293,8 @@ def run_agent(get_input_fn: Callable[[list[str]], str]):
         try:
             user_input = get_input_fn(history)
         except (EOFError, KeyboardInterrupt):
-            print(f"\n  {C.ASSISTANT_BOLD}o{C.RESET}  {C.ASSISTANT_FG}Bye~{C.RESET}")
+            print()
+            print_goodbye()
             break
 
         user_input = user_input.strip()
@@ -223,20 +304,30 @@ def run_agent(get_input_fn: Callable[[list[str]], str]):
         history.append(user_input)
 
         if user_input.lower() in ("quit", "exit"):
-            print(f"  {C.ASSISTANT_BOLD}o{C.RESET}  {C.ASSISTANT_FG}Bye~{C.RESET}")
+            print_goodbye()
             break
 
         print()
 
+        cancel_event = threading.Event()
         stop_event = threading.Event()
-        anim_thread = threading.Thread(target=thinking_animation, args=(stop_event,))
+
+        anim_thread = threading.Thread(target=thinking_animation, args=(stop_event, cancel_event), daemon=True)
+        esc_thread = threading.Thread(target=esc_listener, args=(cancel_event, stop_event), daemon=True)
         anim_thread.start()
+        esc_thread.start()
 
         try:
-            response = agent.run(user_input)
+            response = agent.run(user_input, cancel_event=cancel_event)
+        except KeyboardInterrupt:
+            response = "[中断] 请求被用户取消"
         finally:
             stop_event.set()
-            anim_thread.join()
+            anim_thread.join(timeout=1)
+            esc_thread.join(timeout=1)
 
-        print_assistant_response(response)
+        if cancel_event.is_set():
+            print(f"  {C.ERROR_FG}[ESC] 已中断{C.RESET}")
+        else:
+            print_assistant_response(response)
         print()

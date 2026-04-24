@@ -1,5 +1,7 @@
 # agent/loop.py
 """Agent 核心循环 - Anthropic 协议"""
+import threading
+
 from agent.context import Context
 from agent.adapter import LLMAdapter, LLMResponse, LLMError
 
@@ -13,7 +15,7 @@ class Agent:
         self.context = context
         self.max_steps = max_steps
 
-    def run(self, user_input: str) -> str:
+    def run(self, user_input: str, cancel_event: threading.Event = None) -> str:
         """核心循环"""
         self.context.add_user(user_input)
 
@@ -22,7 +24,7 @@ class Agent:
             tools = self.tools.list_for_llm() if hasattr(self.tools, 'list_for_llm') else []
 
             try:
-                response = self.llm_adapter.chat(messages, tools)
+                response = self.llm_adapter.chat(messages, tools, cancel_event=cancel_event)
             except LLMError as e:
                 return f"[LLM Error] {e}"
 

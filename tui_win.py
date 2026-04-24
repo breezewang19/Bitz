@@ -6,6 +6,8 @@ import msvcrt
 
 from tui_core import C, display_width, run_agent
 
+PASTE_THRESHOLD = 0.02  # 20ms 内连续收到字符视为粘贴
+
 
 def get_input_styled(history: list[str]) -> str:
     """获取用户输入（Windows msvcrt 版本）"""
@@ -30,22 +32,68 @@ def get_input_styled(history: list[str]) -> str:
         try:
             ch = msvcrt.getwch()
         except KeyboardInterrupt:
-            print(f"\n  {C.ASSISTANT_BOLD}o{C.RESET}  {C.ASSISTANT_FG}Bye~{C.RESET}")
+            from tui_core import print_goodbye
+            print()
+            print_goodbye()
             sys.exit(0)
+
+        # 粘贴检测: 缓冲区有大量字符，一次性读取
+        if (ord(ch) >= 32 or ch in ('\r', '\n')) and ch not in ('\x1b', '\x00', '\xe0') and msvcrt.kbhit():
+            import time
+            if ch == '\r' or ch == '\n':
+                buf = '\n'
+            else:
+                line = line[:cursor] + ch + line[cursor:]
+                cursor += 1
+                buf = ""
+            last_time = time.monotonic()
+            while True:
+                if msvcrt.kbhit():
+                    try:
+                        c = msvcrt.getwch()
+                    except:
+                        break
+                    if c == '\r' or c == '\n':
+                        buf += '\n'
+                    elif ord(c) >= 32 and c not in ('\x1b', '\x00', '\xe0'):
+                        buf += c
+                    else:
+                        break
+                    last_time = time.monotonic()
+                elif time.monotonic() - last_time > PASTE_THRESHOLD:
+                    break
+            if buf:
+                line += buf
+                cursor = len(line)
+                refresh()
+                continue
 
         if ch == '\r':
             sys.stdout.write("\033[2K\r")
-            try:
-                width = shutil.get_terminal_size().columns
-            except:
-                width = 80
-            dw = display_width(line)
-            spaces = " " * (width - dw - 4)
-            sys.stdout.write(f"{C.USER_BG}{C.USER_FG}>  {line}{spaces}{C.RESET}")
+            if '\n' in line:
+                # 多行内容：逐行回显
+                for ln in line.split('\n'):
+                    try:
+                        width = shutil.get_terminal_size().columns
+                    except:
+                        width = 80
+                    dw = display_width(ln)
+                    spaces = " " * max(0, width - dw - 4)
+                    sys.stdout.write(f"{C.USER_BG}{C.USER_FG}>  {ln}{spaces}{C.RESET}\n")
+            else:
+                try:
+                    width = shutil.get_terminal_size().columns
+                except:
+                    width = 80
+                dw = display_width(line)
+                spaces = " " * max(0, width - dw - 4)
+                sys.stdout.write(f"{C.USER_BG}{C.USER_FG}>  {line}{spaces}{C.RESET}")
             sys.stdout.flush()
             break
         elif ch == '\x03':
-            print(f"\n  {C.ASSISTANT_BOLD}o{C.RESET}  {C.ASSISTANT_FG}Bye~{C.RESET}")
+            print(f"\n")
+            from tui_core import print_goodbye
+            print_goodbye()
             sys.exit(0)
         elif ch == '\x00' or ch == '\xe0':
             # Windows special key prefix

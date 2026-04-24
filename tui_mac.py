@@ -48,9 +48,11 @@ def get_input_styled(history: list[str]) -> str:
                 sys.stdout.flush()
                 break
             elif ch == '\x03':  # Ctrl+C
-                sys.stdout.write(f"\n  {C.ASSISTANT_BOLD}o{C.RESET}  {C.ASSISTANT_FG}Bye~{C.RESET}\n")
+                from tui_core import print_goodbye
+                sys.stdout.write("\n")
                 sys.stdout.flush()
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                print_goodbye()
                 sys.exit(0)
             elif ch == '\x1b':
                 ch2 = sys.stdin.read(1)
