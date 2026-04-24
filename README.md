@@ -21,8 +21,8 @@ python tui.py
 通过本项目可以学习：
 
 1. **Agent 循环** - ReAct 模式的循环控制器
-2. **工具注册** - 动态注册和调用工具
-3. **LLM 适配** - Anthropic 协议适配
+2. **工具注册** - 动态注册和调用工具，支持危险操作确认
+3. **LLM 适配** - Anthropic 协议适配 + 自动重试 + 取消支持
 4. **上下文管理** - 会话历史和消息截断
 5. **TUI 开发** - 跨平台终端界面（core + 平台兼容层）
 
@@ -31,19 +31,21 @@ python tui.py
 ```
 Bitz/
 ├── agent/            # 核心模块
-│   ├── adapter.py   # LLM 适配器（Anthropic 协议 + 重试）
+│   ├── adapter.py   # LLM 适配器（Anthropic 协议 + 重试 + 可取消）
 │   ├── context.py   # 会话上下文（Anthropic 格式）
-│   ├── loop.py      # Agent 循环（ReAct 模式）
-│   └── tools.py     # 工具注册表
+│   ├── loop.py      # Agent 循环（ReAct 模式 + 危险操作确认）
+│   ├── tools.py     # 工具注册表 + 危险操作检测
+│   └── builtin_tools.py  # 内置工具定义
 ├── tests/            # 单元测试
 ├── learning/         # 学习资料
 │   ├── 01-agent-frameworks-overview.md
 │   └── 02-minimal-agent-design.md
 ├── tui_core.py       # TUI 共性逻辑（颜色、banner、动画、输出、主循环）
-├── tui_win.py        # Windows 兼容层（msvcrt 输入）
+├── tui_win.py        # Windows 兼容层（msvcrt 输入 + 粘贴检测）
 ├── tui_mac.py        # macOS/Linux 兼容层（termios 输入）
 ├── tui.py            # 入口（自动检测平台）
 ├── .env              # API 配置
+├── .env.example      # 配置模板
 └── requirements.txt  # 依赖
 ```
 
@@ -58,6 +60,10 @@ Bitz/
 | `glob` | `pattern: str` | 搜索文件（支持 `**/*.py` 等） |
 | `grep` | `pattern, path?, include?` | 搜索文件内容（支持正则） |
 | `fetch` | `url: str` | 获取网页内容（自动清理 HTML 标签） |
+
+## 危险操作确认
+
+`bash` 命令中的危险操作（如 `rm`, `dd`, `chmod 777` 等）和 `write_file` 覆盖已有文件时，会自动弹出确认对话框。用户可以选择批准或拒绝。
 
 ## 测试
 
