@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Minimal Agent TUI - Windows 版本"""
+"""Minimal Agent TUI - macOS/Linux 版本"""
 import os
 import sys
 import time
 import threading
+import tty
+import termios
 import shutil
 from dotenv import load_dotenv
 
@@ -45,6 +47,11 @@ def get_width() -> int:
         return shutil.get_terminal_size().columns
     except:
         return 80
+
+
+def color_block(text: str, fg: str, bg: str = "") -> str:
+    """创建带颜色的文本块"""
+    return f"{bg}{fg}{text}{C.RESET}"
 
 
 def separator():
@@ -140,6 +147,7 @@ def print_tool_call(name: str, args: dict = None):
 
     if name == "bash":
         cmd = args.get('command', '') if args else ''
+        # 如果命令太长，截断显示
         if len(cmd) > width - 20:
             cmd = cmd[:width - 23] + "..."
         content = cmd
@@ -151,6 +159,7 @@ def print_tool_call(name: str, args: dict = None):
     else:
         content = ""
 
+    # 工具调用块
     print(f"{C.TOOL_FG}┌─ {C.TOOL_BOLD}[{name}]{C.RESET}{C.TOOL_FG} ─┐{C.RESET}")
     if content:
         print(f"{C.TOOL_FG}│{C.RESET} {content}")
@@ -161,11 +170,14 @@ def print_user_input(text: str):
     """打印用户输入"""
     width = get_width()
 
+    # 如果输入太长，截断显示
     display_text = text
     if len(display_text) > width - 4:
         display_text = display_text[:width - 7] + "..."
 
+    # 填充到终端宽度
     padding = " " * (width - len(display_text) - 1)
+
     print(f"{C.USER_BG}{C.USER_FG}{display_text}{padding}{C.RESET}")
 
 
@@ -174,7 +186,9 @@ def print_assistant_response(response: str):
     width = get_width()
     lines = response.split("\n")
 
+    # 逐行打印，带缩进
     for i, line in enumerate(lines):
+        # 如果行太长，截断显示（保留完整内容在日志中）
         if len(line) > width - 6:
             line = line[:width - 9] + "..."
 
@@ -186,46 +200,44 @@ def print_assistant_response(response: str):
 
 def print_welcome():
     """打印欢迎信息"""
+    width = get_width()
     separator()
     print_banner()
     separator()
 
 
 def get_input_styled() -> str:
-    """获取用户输入（Windows 版本）"""
-    import msvcrt
+    """获取用户输入（macOS/Linux 版本）"""
+    old_settings = termios.tcgetattr(sys.stdin)
+
+    # 禁用 echo，避免字符被打印两遍
+    new_settings = termios.tcgetattr(sys.stdin.fileno())
+    new_settings[3] = new_settings[3] & ~termios.ECHO
 
     sys.stdout.write(f"{C.USER_FG}> {C.RESET} ")
     sys.stdout.flush()
 
     line = ""
-    while True:
-        try:
-            ch = msvcrt.getwch()
-            if ch == '\r':
-                sys.stdout.write("\033[2K\r")
-                try:
-                    width = shutil.get_terminal_size().columns
-                except:
-                    width = 80
-                spaces = " " * (width - len(line) - 4)
-                sys.stdout.write(f"{C.USER_BG}{C.USER_FG}>  {line}{spaces}{C.RESET}")
-                sys.stdout.flush()
+    try:
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, new_settings)
+        tty.setcbreak(sys.stdin.fileno())
+        while True:
+            ch = sys.stdin.read(1)
+            if ch == '\n' or ch == '\r':
                 break
-            elif ch == '\b':
+            elif ch == '\x7f':  # Backspace
                 if line:
                     line = line[:-1]
                     sys.stdout.write('\b \b')
                     sys.stdout.flush()
-            elif ch == '\x03':
+            elif ch == '\x03':  # Ctrl+C
                 raise KeyboardInterrupt
             else:
                 line += ch
                 sys.stdout.write(ch)
                 sys.stdout.flush()
-        except KeyboardInterrupt:
-            print(f"\n  {C.ASSISTANT_BOLD}o{C.RESET}  {C.ASSISTANT_FG}Bye~{C.RESET}")
-            sys.exit(0)
+    finally:
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
     return line
 
@@ -285,6 +297,7 @@ def main():
         print_user_input(user_input)
         print()
 
+        # 启动等待动画
         stop_event = threading.Event()
         anim_thread = threading.Thread(target=thinking_animation, args=(stop_event,))
         anim_thread.start()
