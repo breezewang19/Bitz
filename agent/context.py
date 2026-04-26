@@ -21,6 +21,11 @@ class Context:
         self.messages.append({"role": "assistant", "content": content})
         self._trim()
 
+    def add_assistant_text(self, text: str) -> None:
+        """添加 assistant 纯文本消息"""
+        self.messages.append({"role": "assistant", "content": text})
+        self._trim()
+
     def add_tool_result(self, tool_use_id: str, content: str) -> None:
         """添加工具结果（Anthropic 格式：user 角色带 tool_result content block）"""
         self.messages.append({
@@ -34,9 +39,23 @@ class Context:
         self._trim()
 
     def _trim(self) -> None:
-        """保持消息数量不超过 keep_last_n"""
-        if len(self.messages) > self.keep_last_n:
-            self.messages = self.messages[-self.keep_last_n:]
+        """保持消息数量不超过 keep_last_n，保证 tool_use/tool_result 配对完整"""
+        if len(self.messages) <= self.keep_last_n:
+            return
+        self.messages = self.messages[-self.keep_last_n:]
+        # 确保 tool_result 有对应的 tool_use：如果第一条消息是 tool_result，
+        # 说明对应的 assistant tool_use 消息被裁掉了，必须一起移除
+        while self.messages:
+            first = self.messages[0]
+            if first["role"] == "user" and isinstance(first.get("content"), list):
+                has_tool_result = any(
+                    isinstance(b, dict) and b.get("type") == "tool_result"
+                    for b in first["content"]
+                )
+                if has_tool_result:
+                    self.messages.pop(0)
+                    continue
+            break
 
     def get_messages(self) -> list[dict]:
         """返回完整消息列表（system 作为独立条目）"""

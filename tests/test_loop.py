@@ -46,10 +46,12 @@ def test_agent_run_text_response():
     result = agent.run("What can you do?")
     assert result == "Hello, how can I help?"
 
-    # Check that user message was added to context
-    assert len(ctx.messages) == 1
+    # Check that user + assistant messages were added to context
+    assert len(ctx.messages) == 2
     assert ctx.messages[0]["role"] == "user"
     assert ctx.messages[0]["content"] == "What can you do?"
+    assert ctx.messages[1]["role"] == "assistant"
+    assert ctx.messages[1]["content"] == "Hello, how can I help?"
 
     # Check that chat was called with correct messages
     mock_adapter.chat.assert_called_once()
@@ -100,8 +102,8 @@ def test_agent_run_tool_call():
     # Check tool was executed
     mock_tools.execute.assert_called_once_with("echo", {"x": "hello"}, confirmed=False, tool_id="toolu_01")
 
-    # Check context has user message, assistant tool_use, and tool result (Anthropic format)
-    assert len(ctx.messages) == 3
+    # Check context: user, assistant tool_use, tool result, assistant end_turn
+    assert len(ctx.messages) == 4
     assert ctx.messages[0]["role"] == "user"
     assert ctx.messages[0]["content"] == "Echo back hello"
     # Assistant tool_use message
@@ -112,6 +114,9 @@ def test_agent_run_tool_call():
     assert ctx.messages[2]["role"] == "user"
     assert ctx.messages[2]["content"][0]["tool_use_id"] == "toolu_01"
     assert ctx.messages[2]["content"][0]["content"] == "hello"
+    # Assistant end_turn response
+    assert ctx.messages[3]["role"] == "assistant"
+    assert ctx.messages[3]["content"] == "Tool returned: hello"
 
 
 def test_agent_run_max_steps_exceeded():

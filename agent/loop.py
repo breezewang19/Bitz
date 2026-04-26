@@ -41,6 +41,7 @@ class Agent:
                 return f"[LLM Error] {e}"
 
             if response.stop_reason == "end_turn":
+                self.context.add_assistant_text(response.content)
                 return response.content
 
             if response.stop_reason == "tool_use":
@@ -67,6 +68,7 @@ class Agent:
                 if pending_tools:
                     tool_id, tool_name, tool_args, result = pending_tools[0]
                     self._pending_confirm = (tool_id, tool_name, tool_args, result)
+                    self._pending_response = response.content
                     return result
 
                 # 所有工具都确认过了，添加 assistant 消息并执行
@@ -78,7 +80,7 @@ class Agent:
         return f"Error: Exceeded max_steps ({self.max_steps})"
 
     def confirm_pending(self, confirmed_tools: set) -> tuple:
-        """执行待确认的工具调用，返回 (should_continue, response)"""
+        """执行待确认的工具调用，将所有工具结果写入上下文，返回 (should_continue, result)"""
         if self._pending_confirm is None:
             return (False, "No pending confirmation")
 
@@ -86,14 +88,18 @@ class Agent:
         confirmed_tools.add(tool_id)
         self._pending_confirm = None
 
-        # 先添加 assistant 消息
-        # 注意：这里需要重建 tool_use 结构
-        self.context.add_assistant_message([{
-            "type": "tool_use",
-            "id": tool_id,
-            "name": tool_name,
-            "input": tool_args
-        }])
+        # 添加完整的 assistant 消息（包含所有 tool_use blocks）
+        response_content = getattr(self, '_pending_response', None)
+        if response_content:
+            self.context.add_assistant_message(response_content)
+            self._pending_response = None
+        else:
+            self.context.add_assistant_message([{
+                "type": "tool_use",
+                "id": tool_id,
+                "name": tool_name,
+                "input": tool_args
+            }])
 
         result = self.tools.execute(tool_name, tool_args, confirmed=True, tool_id=tool_id)
         self.context.add_tool_result(tool_id, result)

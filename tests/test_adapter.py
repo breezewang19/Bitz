@@ -1,97 +1,95 @@
 # tests/test_adapter.py
+"""Tests for LLMAdapter"""
+import threading
+from unittest.mock import MagicMock, patch
+
 import pytest
-import os
-from unittest.mock import patch, MagicMock
-from agent.adapter import LLMAdapter, LLMResponse
+from agent.adapter import LLMAdapter, LLMResponse, LLMError
 
 
-def test_llm_response_dataclass():
-    """测试 LLMResponse 数据类"""
-    response = LLMResponse(
-        content="Hello",
-        stop_reason="end_turn"
-    )
-    assert response.content == "Hello"
-    assert response.stop_reason == "end_turn"
+class TestLLMAdapterChat:
+    @patch("anthropic.Anthropic")
+    def test_chat_returns_response(self, mock_anthropic_cls):
+        """chat() should return LLMResponse on success."""
+        mock_client = MagicMock()
+        mock_anthropic_cls.return_value = mock_client
+
+        mock_message = MagicMock()
+        mock_message.content = [MagicMock(type="text", text="Hello!")]
+        mock_message.stop_reason = "end_turn"
+        mock_client.messages.create.return_value = mock_message
+
+        adapter = LLMAdapter(api_key="test-key", model="test-model")
+        response = adapter.chat(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[],
+        )
+        assert isinstance(response, LLMResponse)
+        assert response.content == "Hello!"
+        assert response.stop_reason == "end_turn"
+
+    @patch("anthropic.Anthropic")
+    def test_chat_handles_tool_use(self, mock_anthropic_cls):
+        """chat() should handle tool_use stop reason."""
+        mock_client = MagicMock()
+        mock_anthropic_cls.return_value = mock_client
+
+        tool_block = MagicMock(type="tool_use", id="t1", name="bash", input={"cmd": "ls"})
+        mock_message = MagicMock()
+        mock_message.content = [tool_block]
+        mock_message.stop_reason = "tool_use"
+        mock_client.messages.create.return_value = mock_message
+
+        adapter = LLMAdapter(api_key="test-key", model="test-model")
+        response = adapter.chat(
+            messages=[{"role": "user", "content": "list files"}],
+            tools=[{"name": "bash", "description": "run bash", "input_schema": {}}],
+        )
+        assert response.stop_reason == "tool_use"
+        assert len(response.content) == 1
+        assert response.content[0]["name"] == "bash"
+
+    @patch("anthropic.Anthropic")
+    def test_chat_raises_on_api_error(self, mock_anthropic_cls):
+        """chat() should raise LLMError on API failure."""
+        mock_client = MagicMock()
+        mock_anthropic_cls.return_value = mock_client
+        mock_client.messages.create.side_effect = Exception("API error")
+
+        adapter = LLMAdapter(api_key="test-key", model="test-model")
+        with pytest.raises(LLMError):
+            adapter.chat(messages=[{"role": "user", "content": "hi"}], tools=[])
 
 
-def test_llm_adapter_init():
-    """测试适配器初始化"""
-    adapter = LLMAdapter(
-        api_key="test-key",
-        base_url="https://api.test.com",
-        model="test-model"
-    )
-    assert adapter.api_key == "test-key"
-    assert adapter.model == "test-model"
-    assert adapter.base_url == "https://api.test.com"
+class TestLLMAdapterCancel:
+    @patch("anthropic.Anthropic")
+    def test_cancel_event_stops_chat(self, mock_anthropic_cls):
+        """chat() should raise LLMError when cancel_event is set during call."""
+        mock_client = MagicMock()
+        mock_anthropic_cls.return_value = mock_client
 
+        # Simulate a long-running create call that we cancel
+        def slow_create(**kwargs):
+            import time
+            time.sleep(10)
+            return MagicMock()
 
-@patch("agent.adapter.anthropic")
-def test_llm_adapter_chat_with_text_response(mock_anthropic):
-    """测试普通文本回复"""
-    mock_client = MagicMock()
-    mock_response = MagicMock()
+        mock_client.messages.create.side_effect = slow_create
 
-    # 模拟文本响应
-    mock_text_block = MagicMock()
-    mock_text_block.type = "text"
-    mock_text_block.text = "Hello, world!"
+        adapter = LLMAdapter(api_key="test-key", model="test-model")
+        cancel_event = threading.Event()
 
-    mock_response.content = [mock_text_block]
-    mock_response.stop_reason = "end_turn"
+        # Set cancel after a short delay
+        def set_cancel():
+            import time
+            time.sleep(0.1)
+            cancel_event.set()
 
-    mock_client.messages.create.return_value = mock_response
-    mock_anthropic.Anthropic.return_value = mock_client
+        threading.Thread(target=set_cancel, daemon=True).start()
 
-    adapter = LLMAdapter(
-        api_key="test-key",
-        base_url="https://api.test.com",
-        model="test-model"
-    )
-
-    response = adapter.chat(
-        messages=[{"role": "user", "content": "hi"}],
-        tools=[]
-    )
-
-    assert response.content == "Hello, world!"
-    assert response.stop_reason == "end_turn"
-
-
-@patch("agent.adapter.anthropic")
-def test_llm_adapter_chat_with_tool_call(mock_anthropic):
-    """测试工具调用响应"""
-    mock_client = MagicMock()
-    mock_response = MagicMock()
-
-    # 模拟 tool_use 响应
-    mock_tool_block = MagicMock()
-    mock_tool_block.type = "tool_use"
-    mock_tool_block.id = "toolu_01"
-    mock_tool_block.name = "echo"
-    mock_tool_block.input = {"x": "hello"}
-
-    mock_response.content = [mock_tool_block]
-    mock_response.stop_reason = "tool_use"
-
-    mock_client.messages.create.return_value = mock_response
-    mock_anthropic.Anthropic.return_value = mock_client
-
-    adapter = LLMAdapter(
-        api_key="test-key",
-        base_url="https://api.test.com",
-        model="test-model"
-    )
-
-    response = adapter.chat(
-        messages=[{"role": "user", "content": "use echo"}],
-        tools=[{"name": "echo", "description": "Echo back", "input_schema": {}}]
-    )
-
-    assert response.stop_reason == "tool_use"
-    assert isinstance(response.content, list)
-    assert len(response.content) == 1
-    assert response.content[0]["type"] == "tool_use"
-    assert response.content[0]["name"] == "echo"
-    assert response.content[0]["input"] == {"x": "hello"}
+        with pytest.raises(LLMError, match="已中断"):
+            adapter.chat(
+                messages=[{"role": "user", "content": "hi"}],
+                tools=[],
+                cancel_event=cancel_event,
+            )

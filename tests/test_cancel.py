@@ -13,8 +13,12 @@ from agent.context import Context
 class TestAdapterCancel:
     """测试 adapter 的 cancel_event 支持"""
 
-    def test_cancel_event_set_before_call(self):
+    @patch("anthropic.Anthropic")
+    def test_cancel_event_set_before_call(self, mock_anthropic_cls):
         """cancel_event 已设置时，chat 应立即抛出 LLMError"""
+        mock_client = MagicMock()
+        mock_anthropic_cls.return_value = mock_client
+
         adapter = LLMAdapter(api_key="test", model="test-model")
         cancel = threading.Event()
         cancel.set()
@@ -26,31 +30,33 @@ class TestAdapterCancel:
                 cancel_event=cancel
             )
 
-    def test_cancel_event_set_during_call(self):
+    @patch("anthropic.Anthropic")
+    def test_cancel_event_set_during_call(self, mock_anthropic_cls):
         """API 调用期间设置 cancel_event，应抛出 LLMError"""
+        mock_client = MagicMock()
+        mock_anthropic_cls.return_value = mock_client
+
+        def slow_create(**kwargs):
+            time.sleep(10)
+            return MagicMock()
+
+        mock_client.messages.create.side_effect = slow_create
+
         adapter = LLMAdapter(api_key="test", model="test-model")
         cancel = threading.Event()
 
-        # Mock client.messages.create 为长时间阻塞
-        with patch.object(adapter, '_chat_once') as mock_chat:
-            def slow_call(*args, **kwargs):
-                time.sleep(5)
-                return LLMResponse(content="done", stop_reason="end_turn")
-            mock_chat.side_effect = slow_call
+        def set_cancel():
+            time.sleep(0.1)
+            cancel.set()
 
-            # 在另一个线程中延迟设置 cancel
-            def set_cancel():
-                time.sleep(0.3)
-                cancel.set()
+        threading.Thread(target=set_cancel, daemon=True).start()
 
-            threading.Thread(target=set_cancel, daemon=True).start()
-
-            with pytest.raises(LLMError, match="已中断"):
-                adapter.chat(
-                    messages=[{"role": "user", "content": "hi"}],
-                    tools=[],
-                    cancel_event=cancel
-                )
+        with pytest.raises(LLMError, match="已中断"):
+            adapter.chat(
+                messages=[{"role": "user", "content": "hi"}],
+                tools=[],
+                cancel_event=cancel
+            )
 
     def test_no_cancel_event_works_normally(self):
         """不传 cancel_event 时正常工作"""
@@ -58,7 +64,6 @@ class TestAdapterCancel:
         mock_adapter.chat.return_value = LLMResponse(
             content="Hello", stop_reason="end_turn"
         )
-        # 不传 cancel_event 也能正常调用
         result = mock_adapter.chat(
             messages=[{"role": "user", "content": "hi"}],
             tools=[]
@@ -117,7 +122,6 @@ class TestAgentCancel:
         mock_adapter = MagicMock()
         mock_tools = MagicMock()
 
-        # 第一次调用返回 tool_use，第二次取消
         mock_adapter.chat.side_effect = [
             LLMResponse(
                 content=[{"type": "tool_use", "id": "t1", "name": "echo", "input": {}}],
