@@ -15,6 +15,7 @@ class Agent:
         self.context = context
         self.max_steps = max_steps
         self._pending_confirm: tuple = None  # (tool_id, tool_name, tool_args, result)
+        self._confirmed_results: list = []   # 已确认但未写入上下文的工具结果
 
     def run(self, user_input: str, cancel_event: threading.Event = None,
             confirmed_tools: set = None, skip_add_user: bool = False) -> str:
@@ -69,13 +70,22 @@ class Agent:
                     tool_id, tool_name, tool_args, result = pending_tools[0]
                     self._pending_confirm = (tool_id, tool_name, tool_args, result)
                     self._pending_response = response.content
+                    # 保存已确认工具的结果，等 confirm_pending 时一起写入上下文
+                    self._confirmed_results = confirmed_results
                     return result
 
                 # 所有工具都确认过了，添加 assistant 消息并执行
                 self.context.add_assistant_message(response.content)
-                for tool_id, tool_name, tool_args, result in confirmed_results:
-                    self.context.add_tool_result(tool_id, result)
+                self.context.add_tool_results(
+                    [(tool_id, result) for tool_id, tool_name, tool_args, result in confirmed_results]
+                )
                 continue
+
+            # max_tokens 或其他 stop_reason：记录部分响应并返回
+            self.context.add_assistant_text(response.content)
+            if response.stop_reason == "max_tokens":
+                return f"{response.content}\n\n[输出被截断，已达最大 token 限制]"
+            return response.content
 
         return f"Error: Exceeded max_steps ({self.max_steps})"
 
@@ -101,6 +111,15 @@ class Agent:
                 "input": tool_args
             }])
 
+        # 执行确认的工具
         result = self.tools.execute(tool_name, tool_args, confirmed=True, tool_id=tool_id)
-        self.context.add_tool_result(tool_id, result)
+
+        # 收集所有工具结果：之前已确认的 + 刚确认的
+        all_results = list(self._confirmed_results)
+        all_results.append((tool_id, tool_name, tool_args, result))
+        self._confirmed_results = []
+
+        self.context.add_tool_results(
+            [(tid, res) for tid, tname, targs, res in all_results]
+        )
         return (True, result)

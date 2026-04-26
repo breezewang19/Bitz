@@ -14,6 +14,8 @@ class Tool:
     input_schema: dict
     handler: Callable
     dangerous: bool = False  # 是否需要危险操作确认
+    is_readonly: Optional[Callable] = None  # 判断参数是否为只读操作
+    is_extra_dangerous: Optional[Callable] = None  # 判断参数是否为额外危险操作
 
 
 # 危险操作模式
@@ -53,14 +55,18 @@ class ToolRegistry:
 
     def register(self, name: str, description: str,
                  input_schema: dict, handler: Callable,
-                 dangerous: bool = False) -> None:
+                 dangerous: bool = False,
+                 is_readonly: Callable = None,
+                 is_extra_dangerous: Callable = None) -> None:
         """注册一个工具"""
         self.tools[name] = Tool(
             name=name,
             description=description,
             input_schema=input_schema,
             handler=handler,
-            dangerous=dangerous
+            dangerous=dangerous,
+            is_readonly=is_readonly,
+            is_extra_dangerous=is_extra_dangerous
         )
 
     def execute(self, name: str, args: dict, confirmed: bool = False,
@@ -71,8 +77,23 @@ class ToolRegistry:
 
         tool = self.tools[name]
 
+        # 只读命令自动批准，不需要确认
+        if tool.dangerous and tool.is_readonly:
+            try:
+                if name == "bash" and "command" in args and tool.is_readonly(args["command"]):
+                    confirmed = True
+            except Exception:
+                pass
+
         # 危险操作需要确认
         if tool.dangerous and not confirmed:
+            # 额外危险检测（如 rm -rf, shutdown）
+            if tool.is_extra_dangerous:
+                try:
+                    if name == "bash" and "command" in args and tool.is_extra_dangerous(args["command"]):
+                        return f"[CONFIRM_REQUIRED] {tool_id or ''} 危险命令: {args['command']}"
+                except Exception:
+                    pass
             # bash 危险命令检测
             if name == "bash" and "command" in args:
                 reason = check_dangerous_bash(args["command"])
@@ -82,6 +103,9 @@ class ToolRegistry:
             if name == "write_file" and "path" in args:
                 if check_dangerous_write(args["path"]):
                     return f"[CONFIRM_REQUIRED] {tool_id or ''} 覆盖已有文件"
+            # edit_file 需要确认
+            if name == "edit_file":
+                return f"[CONFIRM_REQUIRED] {tool_id or ''} 修改文件内容"
 
         try:
             result = tool.handler(**args)

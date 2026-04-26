@@ -27,15 +27,19 @@ class Context:
         self._trim()
 
     def add_tool_result(self, tool_use_id: str, content: str) -> None:
-        """添加工具结果（Anthropic 格式：user 角色带 tool_result content block）"""
-        self.messages.append({
-            "role": "user",
-            "content": [{
+        """添加单个 tool_result（兼容方法，用于 confirm_pending 等单工具场景）"""
+        self.add_tool_results([(tool_use_id, content)])
+
+    def add_tool_results(self, results: list[tuple[str, str]]) -> None:
+        """添加多个 tool_result 到一条 user 消息（Anthropic API 要求同轮结果合并）"""
+        blocks = []
+        for tool_id, result in results:
+            blocks.append({
                 "type": "tool_result",
-                "tool_use_id": tool_use_id,
-                "content": content
-            }]
-        })
+                "tool_use_id": tool_id,
+                "content": result,
+            })
+        self.messages.append({"role": "user", "content": blocks})
         self._trim()
 
     def _trim(self) -> None:

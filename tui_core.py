@@ -415,7 +415,17 @@ def run_agent(get_input_fn: Callable[[list[str]], str]):
                         agent._pending_confirm = None
                     response = "[已取消] 危险操作被用户拒绝"
         except KeyboardInterrupt:
+            # 清理 Agent 残留状态
+            agent._pending_confirm = None
+            agent._pending_response = None
+            agent._confirmed_results = []
             response = "[中断] 请求被用户取消"
+        except Exception as e:
+            # 兜底：清理状态，显示友好错误
+            agent._pending_confirm = None
+            agent._pending_response = None
+            agent._confirmed_results = []
+            response = f"[错误] {type(e).__name__}: {e}"
         finally:
             stop_event.set()
             anim_thread.join(timeout=1)

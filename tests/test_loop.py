@@ -143,6 +143,34 @@ def test_agent_run_max_steps_exceeded():
     assert "max_steps" in result.lower()
 
 
+def test_agent_run_max_tokens_stop_reason():
+    """测试 max_tokens stop_reason 不会无限循环"""
+    mock_adapter = MagicMock()
+    mock_adapter.chat.return_value = LLMResponse(
+        content="这是一段被截断的回复",
+        stop_reason="max_tokens"
+    )
+    mock_tools = MagicMock()
+    ctx = Context(system_prompt="You are helpful.")
+
+    agent = Agent(
+        llm_adapter=mock_adapter,
+        tools=mock_tools,
+        context=ctx,
+        max_steps=5
+    )
+
+    result = agent.run("写一篇长文")
+    assert "截断" in result
+    assert "这是一段被截断的回复" in result
+    # 不应该循环多次，只调用一次 LLM
+    assert mock_adapter.chat.call_count == 1
+    # 部分响应应该写入上下文
+    assert len(ctx.messages) == 2
+    assert ctx.messages[1]["role"] == "assistant"
+    assert ctx.messages[1]["content"] == "这是一段被截断的回复"
+
+
 def test_agent_run_multiple_tool_calls():
     """测试多次工具调用"""
     mock_adapter = MagicMock()
@@ -173,3 +201,57 @@ def test_agent_run_multiple_tool_calls():
     assert result == "Final result"
     assert mock_adapter.chat.call_count == 3
     assert mock_tools.execute.call_count == 2
+
+
+def test_agent_confirm_pending_with_confirmed_results():
+    """测试混合确认场景：部分工具已确认，部分需要确认"""
+    mock_adapter = MagicMock()
+    mock_tools = MagicMock()
+
+    # LLM 返回两个 tool_use：echo 不需要确认，bash 需要确认
+    def execute_side_effect(name, args, confirmed=False, tool_id=""):
+        if name == "echo":
+            return "echo result"
+        if name == "bash":
+            if confirmed:
+                return "bash confirmed result"
+            return "[CONFIRM_REQUIRED] bash needs confirmation"
+
+    mock_tools.execute.side_effect = execute_side_effect
+    mock_tools.list_for_llm.return_value = []
+
+    # 第一步：LLM 返回两个 tool_use
+    mock_adapter.chat.return_value = LLMResponse(
+        content=[
+            {"type": "tool_use", "id": "t1", "name": "echo", "input": {"x": 1}},
+            {"type": "tool_use", "id": "t2", "name": "bash", "input": {"cmd": "rm -rf /"}},
+        ],
+        stop_reason="tool_use"
+    )
+
+    ctx = Context(system_prompt="You are helpful.")
+    agent = Agent(
+        llm_adapter=mock_adapter,
+        tools=mock_tools,
+        context=ctx,
+        max_steps=5
+    )
+
+    result = agent.run("Run echo and bash")
+    assert "[CONFIRM_REQUIRED]" in result
+
+    # 确认 bash 工具
+    confirmed_tools = set()
+    should_continue, confirm_result = agent.confirm_pending(confirmed_tools)
+    assert should_continue is True
+    assert confirm_result == "bash confirmed result"
+
+    # 验证上下文：两个 tool_result 都写入了
+    # messages: user, assistant(tool_use x2), user(tool_result x2)
+    assert len(ctx.messages) == 3
+    tool_result_msg = ctx.messages[2]
+    assert tool_result_msg["role"] == "user"
+    assert len(tool_result_msg["content"]) == 2
+    tool_ids = [b["tool_use_id"] for b in tool_result_msg["content"]]
+    assert "t1" in tool_ids
+    assert "t2" in tool_ids

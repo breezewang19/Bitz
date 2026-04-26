@@ -6,24 +6,74 @@ import urllib.request
 
 from agent.tools import ToolRegistry
 
+MAX_OUTPUT = 30000
+HALF_OUTPUT = MAX_OUTPUT // 2
+
+
+def _truncate(text: str, limit: int = MAX_OUTPUT) -> str:
+    """截断过长文本，保留首尾，中间省略"""
+    if len(text) <= limit:
+        return text
+    head = text[:HALF_OUTPUT]
+    tail = text[-HALF_OUTPUT:]
+    omitted = len(text) - len(head) - len(tail)
+    return f"{head}\n... [省略 {omitted} 字符] ...\n{tail}"
+
 
 def create_tools() -> ToolRegistry:
     """创建并注册所有内置工具"""
     tools = ToolRegistry()
+
+    # 只读命令白名单：这些命令自动批准，不需要确认
+    READONLY_COMMANDS = {
+        'ls', 'pwd', 'echo', 'cat', 'head', 'tail', 'wc', 'find', 'which',
+        'whoami', 'hostname', 'date', 'uname', 'df', 'du', 'env', 'printenv',
+        'git status', 'git log', 'git diff', 'git branch', 'git remote',
+        'git show', 'git blame', 'git tag',
+    }
+
+    # 额外的危险命令关键词
+    DANGEROUS_PATTERNS = [
+        'rm -rf', 'rm -r', 'shutdown', 'reboot', 'mkfs', 'dd if=',
+        'pip install', 'pip3 install', 'npm install -g',
+        'python -c', 'python3 -c',
+        'curl | sh', 'curl | bash', 'wget | sh', 'wget | bash',
+        '> /dev/sd', 'chmod 777', 'chown',
+    ]
 
     def bash_handler(command: str) -> str:
         try:
             result = subprocess.run(
                 command, shell=True, capture_output=True, text=True, timeout=30
             )
-            return result.stdout or result.stderr or "(no output)"
+            output = result.stdout or result.stderr or "(no output)"
+            return _truncate(output)
         except Exception as e:
             return f"Error: {e}"
+
+    def bash_is_readonly(command: str) -> bool:
+        """判断命令是否为只读命令"""
+        stripped = command.strip()
+        # 精确匹配白名单
+        if stripped in READONLY_COMMANDS:
+            return True
+        # 白名单前缀匹配（如 "ls -la", "git log --oneline"）
+        first_word = stripped.split()[0] if stripped.split() else ""
+        for ro in READONLY_COMMANDS:
+            if ro.startswith(first_word) and stripped.startswith(ro):
+                return True
+        return False
+
+    def bash_is_dangerous(command: str) -> bool:
+        """判断命令是否包含危险操作"""
+        lower = command.lower()
+        return any(p in lower for p in DANGEROUS_PATTERNS)
 
     def read_file_handler(path: str) -> str:
         try:
             with open(path, "r", encoding="utf-8") as f:
-                return f.read()
+                content = f.read()
+            return _truncate(content)
         except Exception as e:
             return f"Error: {e}"
 
@@ -80,8 +130,21 @@ def create_tools() -> ToolRegistry:
         except Exception as e:
             return f"Error: {e}"
 
+    # SSRF 保护：禁止访问内网地址
+    BLOCKED_HOSTS = {
+        '169.254.169.254',  # AWS/GCP/Azure 元数据
+        'metadata.google.internal',
+        'localhost', '127.0.0.1', '0.0.0.0',
+        '::1',  # IPv6 localhost
+    }
+
     def fetch_handler(url: str) -> str:
         try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            hostname = parsed.hostname or ""
+            if hostname.lower() in BLOCKED_HOSTS or hostname.startswith(('10.', '172.16.', '172.17.', '172.18.', '172.19.', '172.2', '172.3', '192.168.')):
+                return "Error: access to internal/private addresses is blocked"
             req = urllib.request.Request(url, headers={"User-Agent": "Bitz/1.0"})
             with urllib.request.urlopen(req, timeout=15) as resp:
                 data = resp.read(50000).decode("utf-8", errors="replace")
@@ -105,7 +168,9 @@ def create_tools() -> ToolRegistry:
             "required": ["command"]
         },
         handler=bash_handler,
-        dangerous=True
+        dangerous=True,
+        is_readonly=bash_is_readonly,
+        is_extra_dangerous=bash_is_dangerous
     )
 
     tools.register(
@@ -146,7 +211,8 @@ def create_tools() -> ToolRegistry:
             },
             "required": ["path", "old_string", "new_string"]
         },
-        handler=edit_file_handler
+        handler=edit_file_handler,
+        dangerous=True
     )
 
     tools.register(
