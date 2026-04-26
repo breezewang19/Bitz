@@ -1,7 +1,7 @@
 # tests/test_adapter.py
 """Tests for LLMAdapter"""
 import threading
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
 from agent.adapter import LLMAdapter, LLMResponse, LLMError
@@ -14,8 +14,12 @@ class TestLLMAdapterChat:
         mock_client = MagicMock()
         mock_anthropic_cls.return_value = mock_client
 
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "Hello!"
+
         mock_message = MagicMock()
-        mock_message.content = [MagicMock(type="text", text="Hello!")]
+        mock_message.content = [text_block]
         mock_message.stop_reason = "end_turn"
         mock_client.messages.create.return_value = mock_message
 
@@ -34,7 +38,12 @@ class TestLLMAdapterChat:
         mock_client = MagicMock()
         mock_anthropic_cls.return_value = mock_client
 
-        tool_block = MagicMock(type="tool_use", id="t1", name="bash", input={"cmd": "ls"})
+        tool_block = MagicMock()
+        tool_block.type = "tool_use"
+        tool_block.id = "t1"
+        tool_block.name = "bash"
+        tool_block.input = {"cmd": "ls"}
+
         mock_message = MagicMock()
         mock_message.content = [tool_block]
         mock_message.stop_reason = "tool_use"
@@ -48,6 +57,7 @@ class TestLLMAdapterChat:
         assert response.stop_reason == "tool_use"
         assert len(response.content) == 1
         assert response.content[0]["name"] == "bash"
+        assert response.content[0]["id"] == "t1"
 
     @patch("anthropic.Anthropic")
     def test_chat_raises_on_api_error(self, mock_anthropic_cls):
@@ -63,12 +73,28 @@ class TestLLMAdapterChat:
 
 class TestLLMAdapterCancel:
     @patch("anthropic.Anthropic")
-    def test_cancel_event_stops_chat(self, mock_anthropic_cls):
-        """chat() should raise LLMError when cancel_event is set during call."""
+    def test_cancel_event_set_before_call(self, mock_anthropic_cls):
+        """cancel_event 已设置时，chat 应立即抛出 LLMError"""
         mock_client = MagicMock()
         mock_anthropic_cls.return_value = mock_client
 
-        # Simulate a long-running create call that we cancel
+        adapter = LLMAdapter(api_key="test", model="test-model")
+        cancel = threading.Event()
+        cancel.set()
+
+        with pytest.raises(LLMError, match="已中断"):
+            adapter.chat(
+                messages=[{"role": "user", "content": "hi"}],
+                tools=[],
+                cancel_event=cancel
+            )
+
+    @patch("anthropic.Anthropic")
+    def test_cancel_event_set_during_call(self, mock_anthropic_cls):
+        """API 调用期间设置 cancel_event，应抛出 LLMError"""
+        mock_client = MagicMock()
+        mock_anthropic_cls.return_value = mock_client
+
         def slow_create(**kwargs):
             import time
             time.sleep(10)
@@ -76,14 +102,13 @@ class TestLLMAdapterCancel:
 
         mock_client.messages.create.side_effect = slow_create
 
-        adapter = LLMAdapter(api_key="test-key", model="test-model")
-        cancel_event = threading.Event()
+        adapter = LLMAdapter(api_key="test", model="test-model")
+        cancel = threading.Event()
 
-        # Set cancel after a short delay
         def set_cancel():
             import time
             time.sleep(0.1)
-            cancel_event.set()
+            cancel.set()
 
         threading.Thread(target=set_cancel, daemon=True).start()
 
@@ -91,5 +116,5 @@ class TestLLMAdapterCancel:
             adapter.chat(
                 messages=[{"role": "user", "content": "hi"}],
                 tools=[],
-                cancel_event=cancel_event,
+                cancel_event=cancel
             )

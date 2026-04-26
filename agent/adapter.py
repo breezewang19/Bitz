@@ -30,6 +30,8 @@ class LLMAdapter:
 
     def chat(self, messages: list[dict], tools: list[dict], cancel_event: threading.Event = None, max_retries: int = 3) -> LLMResponse:
         """发送请求到 LLM（Anthropic 协议），带重试"""
+        if cancel_event and cancel_event.is_set():
+            raise LLMError("已中断")
         for attempt in range(max_retries):
             try:
                 return self._chat_once(messages, tools, cancel_event)
