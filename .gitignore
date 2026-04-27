@@ -45,3 +45,6 @@ htmlcov/
 
 # Logs
 *.log
+
+# docs&others
+/my-test
