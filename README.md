@@ -24,7 +24,7 @@ python tui.py
 2. **工具注册** - 动态注册和调用工具，支持危险操作确认
 3. **LLM 适配** - Anthropic 协议适配 + 自动重试 + 取消支持
 4. **上下文管理** - 会话历史和消息截断
-5. **TUI 开发** - 跨平台终端界面（core + 平台兼容层）
+5. **TUI 开发** - 基于 Textual 的现代终端界面（组件化 + 动画 + 线程安全）
 
 ## 项目结构
 
@@ -36,14 +36,25 @@ Bitz/
 │   ├── loop.py      # Agent 循环（ReAct 模式 + 危险操作确认）
 │   ├── tools.py     # 工具注册表 + 危险操作检测
 │   └── builtin_tools.py  # 内置工具定义
+├── tui/              # Textual TUI 模块
+│   ├── app.py       # 主应用（Agent 集成 + 确认流程 + 动画控制）
+│   ├── theme.py     # 主题配色 + 全局 CSS
+│   └── widgets/     # 组件
+│       ├── banner.py   # 启动动画（彩虹猫 + 边框 + 眨眼 + 打字机）
+│       ├── chat.py     # 聊天面板（消息 + 思考指示器 + 工具调用）
+│       ├── confirm.py  # 内联确认提示（y/n 批准/拒绝）
+│       ├── input.py    # 输入栏（历史 + 繁忙状态）
+│       └── status.py   # 状态栏（模型名 + 步数）
 ├── tests/            # 单元测试
 ├── learning/         # 学习资料
 │   ├── 01-agent-frameworks-overview.md
-│   └── 02-minimal-agent-design.md
-├── tui_core.py       # TUI 共性逻辑（颜色、banner、动画、输出、主循环）
-├── tui_win.py        # Windows 兼容层（msvcrt 输入 + 粘贴检测）
-├── tui_mac.py        # macOS/Linux 兼容层（termios 输入）
-├── tui.py            # 入口（自动检测平台）
+│   ├── 02-minimal-agent-design.md
+│   ├── 03-agent-robustness-engineering.md
+│   └── 04-tui-with-textual.md
+├── tui_core.py       # Legacy TUI（纯 ANSI，--legacy 可切换）
+├── tui_win.py        # Legacy Windows 兼容层
+├── tui_mac.py        # Legacy macOS/Linux 兼容层
+├── tui.py            # 入口（默认 Textual，--legacy 切换旧版）
 ├── .env              # API 配置
 ├── .env.example      # 配置模板
 └── requirements.txt  # 依赖
@@ -63,7 +74,7 @@ Bitz/
 
 ## 危险操作确认
 
-`bash` 命令中的危险操作（如 `rm`, `dd`, `chmod 777` 等）和 `write_file` 覆盖已有文件时，会自动弹出确认对话框。用户可以选择批准或拒绝。
+`bash` 命令中的危险操作（如 `rm`, `dd`, `chmod 777` 等）和 `write_file` 覆盖已有文件时，会在聊天面板中显示内联确认提示。用户可以用左右方向键选择批准或拒绝，按 Enter 确认。
 
 ## 测试
 
@@ -85,3 +96,5 @@ ANTHROPIC_MODEL=MiniMax-M2.7
 
 - [Agent 框架总览](learning/01-agent-frameworks-overview.md)
 - [Minimal Agent 设计文档](learning/02-minimal-agent-design.md)
+- [Agent 健壮性工程实战](learning/03-agent-robustness-engineering.md)
+- [Textual TUI 开发实战](learning/04-tui-with-textual.md)
