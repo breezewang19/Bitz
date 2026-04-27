@@ -144,12 +144,12 @@ def test_agent_run_max_steps_exceeded():
 
 
 def test_agent_run_max_tokens_stop_reason():
-    """测试 max_tokens stop_reason 不会无限循环"""
+    """测试 max_tokens stop_reason 会自动续写"""
     mock_adapter = MagicMock()
-    mock_adapter.chat.return_value = LLMResponse(
-        content="这是一段被截断的回复",
-        stop_reason="max_tokens"
-    )
+    mock_adapter.chat.side_effect = [
+        LLMResponse(content="这是一段被截断的回复", stop_reason="max_tokens"),
+        LLMResponse(content="续写内容", stop_reason="end_turn"),
+    ]
     mock_tools = MagicMock()
     ctx = Context(system_prompt="You are helpful.")
 
@@ -161,14 +161,16 @@ def test_agent_run_max_tokens_stop_reason():
     )
 
     result = agent.run("写一篇长文")
-    assert "截断" in result
-    assert "这是一段被截断的回复" in result
-    # 不应该循环多次，只调用一次 LLM
-    assert mock_adapter.chat.call_count == 1
-    # 部分响应应该写入上下文
-    assert len(ctx.messages) == 2
+    # 应该续写完成，返回最终内容
+    assert result == "续写内容"
+    # 调用了两次 LLM：第一次 max_tokens，第二次 end_turn
+    assert mock_adapter.chat.call_count == 2
+    # 上下文包含：user输入 + assistant部分 + user续写提示 + assistant续写
+    assert ctx.messages[0]["role"] == "user"
     assert ctx.messages[1]["role"] == "assistant"
     assert ctx.messages[1]["content"] == "这是一段被截断的回复"
+    assert ctx.messages[2]["role"] == "user"
+    assert "继续" in ctx.messages[2]["content"]
 
 
 def test_agent_run_multiple_tool_calls():

@@ -131,7 +131,7 @@ class LLMAdapter:
         kwargs = {
             "model": self.model,
             "messages": anthropic_messages,
-            "max_tokens": 4096,
+            "max_tokens": 16384,
         }
 
         if system_prompt:

@@ -76,7 +76,6 @@ class BannerWidget(Static):
     BannerWidget {
         height: auto;
         margin: 1 0 0 0;
-        text-align: center;
     }
     """
 

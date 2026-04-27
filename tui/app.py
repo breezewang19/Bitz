@@ -24,7 +24,6 @@ class BitzApp(App):
     CSS = BITZ_CSS
 
     BINDINGS = [
-        ("ctrl+c", "quit", "Quit"),
         ("ctrl+l", "clear_screen", "Clear"),
     ]
 
@@ -136,6 +135,27 @@ class BitzApp(App):
             elif event.key == "escape":
                 self._resolve_confirm(False)
                 event.prevent_default()
+            return
+
+        bar = self.query_one(InputBar)
+        # ESC: cancel running agent
+        if event.key == "escape" and bar._busy:
+            self._cancel_event.set()
+            chat = self.query_one(ChatLog)
+            chat.set_canceling()
+            event.prevent_default()
+            return
+
+        # Ctrl+C: cancel if running, quit if idle
+        if event.key == "ctrl+c":
+            if bar._busy:
+                self._cancel_event.set()
+                chat = self.query_one(ChatLog)
+                chat.set_canceling()
+                event.prevent_default()
+            else:
+                self.action_quit()
+                event.prevent_default()
 
     def _resolve_confirm(self, approved: bool) -> None:
         """Resolve the confirm future and clean up the prompt."""
@@ -148,12 +168,14 @@ class BitzApp(App):
         self._confirm_result = None
 
     def on_input_bar_cancel_requested(self, event: InputBar.CancelRequested) -> None:
+        bar = self.query_one(InputBar)
         if self._confirm_prompt is not None and self._confirm_result is not None:
             self._resolve_confirm(False)
             return
-        self._cancel_event.set()
-        chat = self.query_one(ChatLog)
-        chat.set_canceling()
+        if bar._busy:
+            self._cancel_event.set()
+            chat = self.query_one(ChatLog)
+            chat.set_canceling()
 
     def _run_agent(self, user_input: str) -> None:
         self._cancel_event.clear()

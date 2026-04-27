@@ -81,11 +81,12 @@ class Agent:
                 )
                 continue
 
-            # max_tokens 或其他 stop_reason：记录部分响应并返回
-            self.context.add_assistant_text(response.content)
+            # max_tokens：自动续写，让模型完成输出
             if response.stop_reason == "max_tokens":
-                return f"{response.content}\n\n[输出被截断，已达最大 token 限制]"
-            return response.content
+                self.context.add_assistant_text(response.content)
+                # 添加续写提示，让模型继续
+                self.context.add_user("请继续输出，不要重复已说过的内容。")
+                continue
 
         return f"Error: Exceeded max_steps ({self.max_steps})"
 

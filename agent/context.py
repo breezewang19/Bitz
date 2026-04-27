@@ -5,7 +5,7 @@
 class Context:
     """会话上下文"""
 
-    def __init__(self, system_prompt: str = "", max_tokens: int = 4096, keep_last_n: int = 10):
+    def __init__(self, system_prompt: str = "", max_tokens: int = 16384, keep_last_n: int = 10):
         self.system_prompt = system_prompt
         self.messages: list[dict] = []
         self.max_tokens = max_tokens
