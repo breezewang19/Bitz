@@ -53,6 +53,7 @@ class BitzApp(App):
         bar = self.query_one(InputBar)
         bar.focus_input()
         self._install_tool_logger()
+        self._install_retry_logger()
 
     def _install_tool_logger(self) -> None:
         """Monkey-patch tools.execute to log tool calls to UI, matching original tui_core.py."""
@@ -70,6 +71,20 @@ class BitzApp(App):
             return result
 
         self._agent.tools.execute = logged_execute
+
+    def _install_retry_logger(self) -> None:
+        """Set retry callback on LLM adapter to show retry info in UI."""
+        app = self
+        def on_retry(err_msg: str, attempt: int, max_retries: int) -> None:
+            try:
+                app.call_from_thread(app._show_retry_info, err_msg, attempt, max_retries)
+            except Exception:
+                pass
+        self._agent.llm_adapter._on_retry = on_retry
+
+    def _show_retry_info(self, err_msg: str, attempt: int, max_retries: int) -> None:
+        chat = self.query_one(ChatLog)
+        chat.add_message("tool", f"重试 {attempt}/{max_retries}: {err_msg}", tool_name="retry")
 
     def _set_tool_running(self, tool_name: str | None) -> None:
         """Thread-safe: update thinking indicator to show tool running state."""

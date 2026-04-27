@@ -23,22 +23,26 @@ class LLMError(Exception):
 class LLMAdapter:
     """LLM 适配器（Anthropic 协议）"""
 
-    def __init__(self, api_key: str, base_url: str = "https://api.anthropic.com", model: str = "claude-3-5-sonnet-20241022"):
+    def __init__(self, api_key: str, base_url: str = "https://api.anthropic.com", model: str = "claude-3-5-sonnet-20241022",
+                 on_retry=None):
         self.api_key = api_key
         self.base_url = base_url
         self.model = model
         self.api_url = f"{base_url}/v1/messages"
+        self._on_retry = on_retry  # callback(err_msg, attempt, max_retries)
 
     def chat(self, messages: list[dict], tools: list[dict], cancel_event: threading.Event = None, max_retries: int = 5) -> LLMResponse:
         """发送请求到 LLM（Anthropic 协议），带重试"""
         if cancel_event and cancel_event.is_set():
             raise LLMError("已中断")
+        last_error = None
         for attempt in range(max_retries):
             try:
                 return self._chat_once(messages, tools, cancel_event)
             except LLMError:
                 raise
             except Exception as e:
+                last_error = e
                 import anthropic  # 延迟导入
                 # 用 hasattr 兼容不同版本 anthropic SDK
                 retryable = False
@@ -49,6 +53,13 @@ class LLMAdapter:
                 if isinstance(e, (ConnectionError, TimeoutError, OSError)):
                     retryable = True
                 if retryable and attempt < max_retries - 1:
+                    # 通知 UI 正在重试
+                    if self._on_retry:
+                        err_type = type(e).__name__
+                        try:
+                            self._on_retry(f"{err_type}: {str(e).strip()}", attempt + 1, max_retries)
+                        except Exception:
+                            pass
                     # exponential backoff: 2s, 4s, 8s, 16s, 32s + 20% jitter
                     base_wait = 2 ** (attempt + 1)
                     jitter = base_wait * random.uniform(-0.2, 0.2)
@@ -59,12 +70,15 @@ class LLMAdapter:
                         wait = max(wait, retry_after)
                     self._cancel_aware_sleep(wait, cancel_event)
                     continue
-                # 不可重试的错误
+                # 构造详细错误信息
+                err_type = type(e).__name__
+                err_msg = str(e).strip()
+                detail = f"{err_type}: {err_msg}" if err_msg else err_type
                 if hasattr(anthropic, 'APIConnectionError') and isinstance(e, anthropic.APIConnectionError):
-                    raise LLMError(f"API 连接失败: {e}")
+                    raise LLMError(f"API 连接失败 ({self.base_url}): {detail}\n已重试 {attempt + 1}/{max_retries} 次")
                 if hasattr(anthropic, 'BadRequestError') and isinstance(e, anthropic.BadRequestError):
-                    raise LLMError(f"请求参数错误: {e}")
-                raise LLMError(f"API 请求失败: {e}")
+                    raise LLMError(f"请求参数错误: {detail}")
+                raise LLMError(f"API 请求失败 ({self.base_url}): {detail}\n已重试 {attempt + 1}/{max_retries} 次")
 
     def _get_retry_after(self, exc: Exception) -> float | None:
         """从异常中提取 Retry-After header 值（秒）"""

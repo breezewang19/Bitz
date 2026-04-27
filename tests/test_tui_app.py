@@ -34,14 +34,30 @@ async def test_submit_input_calls_agent():
 
 
 @pytest.mark.asyncio
-async def test_cancel_sets_event():
+async def test_cancel_sets_event_when_busy():
+    """ESC should cancel only when agent is running (busy state)."""
+    mock_agent = MagicMock()
+    mock_agent.run.return_value = "ok"
+    app = BitzApp(agent=mock_agent)
+    async with app.run_test() as pilot:
+        bar = app.query_one(InputBar)
+        bar.set_busy(True)
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app._cancel_event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_escape_does_not_cancel_when_idle():
+    """ESC should not cancel when agent is idle."""
     mock_agent = MagicMock()
     mock_agent.run.return_value = "ok"
     app = BitzApp(agent=mock_agent)
     async with app.run_test() as pilot:
         await pilot.press("escape")
         await pilot.pause()
-        assert app._cancel_event.is_set()
+        assert not app._cancel_event.is_set()
 
 
 @pytest.mark.asyncio
