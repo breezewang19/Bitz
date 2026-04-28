@@ -12,6 +12,11 @@ A minimal AI Agent with a beautiful terminal chat interface — under 1000 lines
 - **Beautiful TUI** — Markdown rendering, collapsible tool cards with status icons, syntax highlighting
 - **Theme System** — 3 themes (Dracula dark / Light / Nord), auto-detect terminal, `/theme` to switch
 - **Session Insights** — Token usage tracking, per-turn timing, step counter
+- **Slash Commands** — /help, /clear, /compact, /theme with Tab autocomplete
+- **Multi-line Input** — Shift+Enter for newline, auto-expanding textarea
+- **Streaming Output** — Real-time SSE streaming with incremental Markdown rendering
+- **Code Diff View** — Inline diff for file edits with syntax highlighting
+- **Mouse Support** — Scroll, click to expand/collapse, cursor positioning
 - **Inline Confirmation** — Dangerous commands show y/n prompt right in the chat
 - **Graceful Cancellation** — ESC to cancel, Ctrl+C to quit
 
@@ -30,7 +35,7 @@ python tui.py                  # Launch the TUI
 tui.py (entry point)
 ├── agent/              Core Agent modules
 │   ├── loop.py         Agent — ReAct loop, confirm flow, cancellation
-│   ├── adapter.py      LLMAdapter — Anthropic API, 5x retry, cancel-aware
+│   ├── adapter.py      LLMAdapter — Anthropic API, 5x retry, cancel-aware, stream_chat()
 │   ├── context.py      Context — message history with tool_use/tool_result pairing
 │   ├── tools.py        ToolRegistry — register/execute, 3-tier danger detection
 │   └── builtin_tools.py  7 built-in tools
@@ -75,6 +80,7 @@ The `learning/` directory contains progressive tutorials:
 | 03 | Tools & Context | Tool registry, danger detection, context trimming |
 | 04 | TUI with Textual | Layout, events, thread safety, confirm flow |
 | 05 | TUI Aesthetics | Markdown, tool cards, themes, timing, status bar |
+| 06 | TUI Experience | Slash commands, multi-line input, streaming, diff view |
 
 ## Conventions
 
