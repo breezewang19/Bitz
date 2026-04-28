@@ -5,7 +5,7 @@ import time
 import random
 import threading
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Generator
 
 
 @dataclass
@@ -18,6 +18,20 @@ class LLMResponse:
 class LLMError(Exception):
     """LLM 请求错误"""
     pass
+
+
+@dataclass
+class StreamEvent:
+    """流式事件"""
+    type: str  # text_delta | tool_use | stop
+    # text_delta 字段
+    content: str = ""
+    # tool_use 字段
+    tool_id: str = ""
+    tool_name: str = ""
+    tool_input: dict = None
+    # stop 字段
+    stop_reason: str = ""
 
 
 class LLMAdapter:
@@ -226,3 +240,110 @@ class LLMAdapter:
             if block.type == "text":
                 text_content += block.text
         return LLMResponse(content=text_content, stop_reason=stop_reason)
+
+    def stream_chat(self, messages: list[dict], tools: list[dict],
+                    cancel_event: threading.Event = None,
+                    max_retries: int = 5) -> Generator[StreamEvent, None, None]:
+        """流式请求 LLM，yield StreamEvent 生成器。"""
+        if cancel_event and cancel_event.is_set():
+            raise LLMError("已中断")
+
+        import anthropic
+        import httpx
+
+        client = anthropic.Anthropic(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            timeout=httpx.Timeout(120.0, connect=10.0)
+        )
+
+        # 分离 system prompt 和对话消息（与 _chat_once 相同逻辑）
+        system_prompt = ""
+        conversation_messages = []
+        for msg in messages:
+            if msg["role"] == "system":
+                system_prompt = msg["content"]
+            else:
+                conversation_messages.append(msg)
+
+        anthropic_messages = []
+        for msg in conversation_messages:
+            role = msg["role"]
+            if role == "user":
+                anthropic_messages.append({"role": "user", "content": msg["content"]})
+            elif role == "assistant":
+                if isinstance(msg.get("content"), list):
+                    anthropic_messages.append({"role": "assistant", "content": msg["content"]})
+                else:
+                    anthropic_messages.append({"role": "assistant", "content": msg.get("content", "")})
+
+        kwargs = {
+            "model": self.model,
+            "messages": anthropic_messages,
+            "max_tokens": 16384,
+        }
+        if system_prompt:
+            kwargs["system"] = system_prompt
+        if tools:
+            anthropic_tools = []
+            for tool in tools:
+                anthropic_tools.append({
+                    "name": tool["name"],
+                    "description": tool.get("description", ""),
+                    "input_schema": tool.get("input_schema", {})
+                })
+            kwargs["tools"] = anthropic_tools
+
+        # 流式请求
+        try:
+            with client.messages.stream(**kwargs) as stream:
+                current_tool_id = None
+                current_tool_name = None
+                current_tool_input = {}
+
+                for event in stream:
+                    if cancel_event and cancel_event.is_set():
+                        raise LLMError("已中断")
+
+                    if event.type == "content_block_delta":
+                        if hasattr(event, 'delta') and event.delta.type == "text_delta":
+                            yield StreamEvent(type="text_delta", content=event.delta.text)
+                        elif hasattr(event, 'delta') and event.delta.type == "input_json_delta":
+                            # 工具输入的增量 JSON — 累积但不 yield
+                            pass
+
+                    elif event.type == "content_block_start":
+                        if hasattr(event, 'content_block') and event.content_block.type == "tool_use":
+                            current_tool_id = event.content_block.id
+                            current_tool_name = event.content_block.name
+                            current_tool_input = {}
+
+                    elif event.type == "content_block_stop":
+                        if current_tool_id is not None:
+                            yield StreamEvent(
+                                type="tool_use",
+                                tool_id=current_tool_id,
+                                tool_name=current_tool_name,
+                                tool_input=current_tool_input,
+                            )
+                            current_tool_id = None
+                            current_tool_name = None
+                            current_tool_input = {}
+
+                    elif event.type == "message_stop":
+                        # 获取最终消息以提取 stop_reason 和 usage
+                        try:
+                            final = stream.get_final_message()
+                            self._last_usage = final.usage
+                            yield StreamEvent(type="stop", stop_reason=final.stop_reason)
+                        except Exception:
+                            yield StreamEvent(type="stop", stop_reason="end_turn")
+
+        except LLMError:
+            raise
+        except Exception as e:
+            # 流式失败，回退到同步重试
+            err_type = type(e).__name__
+            err_msg = str(e).strip()
+            detail = f"{err_type}: {err_msg}" if err_msg else err_type
+            raise LLMError(f"流式请求失败: {detail}")
