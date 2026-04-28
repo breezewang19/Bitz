@@ -19,7 +19,7 @@ async def test_full_conversation_flow():
         input_bar = app.query_one(InputBar)
         status = app.query_one(StatusBar)
 
-        input_bar._input.value = "Hi there"
+        input_bar._input.text = "Hi there"
         await pilot.press("enter")
         await pilot.pause(delay=0.5)
 
@@ -54,7 +54,7 @@ async def test_cancel_during_agent_run():
     app = BitzApp(agent=mock_agent)
     async with app.run_test() as pilot:
         input_bar = app.query_one(InputBar)
-        input_bar._input.value = "long query"
+        input_bar._input.text = "long query"
         await pilot.press("enter")
         await pilot.pause(delay=0.2)
 

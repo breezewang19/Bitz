@@ -1,27 +1,51 @@
 from __future__ import annotations
 
 from textual.widget import Widget
-from textual.widgets import Input
+from textual.widgets import TextArea
 from textual.message import Message
 from textual.events import Key
 
 from tui.widgets.command_popup import CommandPopup
 
 
+class MessageInput(TextArea):
+    """自定义 TextArea，Enter 发送消息，Shift+Enter 换行。"""
+
+    class Submit(Message):
+        """用户按下 Enter 时发送。"""
+
+        def __init__(self, text: str) -> None:
+            super().__init__()
+            self.text = text
+
+    def on_key(self, event: Key) -> None:
+        # Enter 发送，Shift+Enter 换行（TextArea 默认行为）
+        # event.key == "enter" 表示普通 Enter，"shift+enter" 表示 Shift+Enter
+        if event.key == "enter":
+            text = self.text.strip()
+            if text:
+                self.post_message(self.Submit(text))
+            event.prevent_default()
+            event.stop()
+
+
 class InputBar(Widget):
     DEFAULT_CSS = """
     InputBar {
-        height: 3;
-        background: #282a36;
-        border-top: solid #44475a;
+        height: auto;
+        min-height: 3;
+        max-height: 10;
+        background: $surface;
+        border-top: solid $panel;
         padding: 0 1;
-        layout: horizontal;
     }
 
-    InputBar Input {
-        background: #1e1e2e;
+    InputBar MessageInput {
+        background: $background;
         border: none;
-        width: 1fr;
+        height: auto;
+        min-height: 1;
+        max-height: 7;
     }
     """
 
@@ -50,42 +74,43 @@ class InputBar(Widget):
         self._command_popup: CommandPopup | None = None
 
     def compose(self):
-        yield Input(placeholder="Type your message... (ESC to cancel)", id="chat-input")
+        yield MessageInput(id="chat-input", soft_wrap=True, show_line_numbers=False)
 
     @property
-    def _input(self) -> Input:
-        return self.query_one("#chat-input", Input)
+    def _input(self) -> MessageInput:
+        return self.query_one("#chat-input", MessageInput)
+
+    def on_message_input_submit(self, event: MessageInput.Submit) -> None:
+        """处理 MessageInput 的 Submit 消息。"""
+        text = event.text
+        self._history.append(text)
+        self._history_index = len(self._history)
+        self._input.text = ""
+        self._close_command_popup()
+        if text.startswith("/"):
+            parts = text[1:].split(None, 1)
+            command = parts[0] if parts else ""
+            args = parts[1] if len(parts) > 1 else ""
+            self.post_message(self.CommandSubmitted(command, args))
+        else:
+            self.post_message(self.MessageSubmitted(text))
 
     def on_key(self, event: Key) -> None:
         # Tab 补全
         if event.key == "tab" and self._command_popup is not None:
             cmd = self._command_popup.select_highlighted()
             if cmd:
-                self._input.value = cmd + " "
+                self._input.text = cmd + " "
                 self._close_command_popup()
             event.prevent_default()
             return
 
-        if event.key == "enter":
-            text = self._input.value.strip()
-            if text:
-                self._history.append(text)
-                self._history_index = len(self._history)
-                self._input.value = ""
-                self._close_command_popup()
-                if text.startswith("/"):
-                    parts = text[1:].split(None, 1)
-                    command = parts[0] if parts else ""
-                    args = parts[1] if len(parts) > 1 else ""
-                    self.post_message(self.CommandSubmitted(command, args))
-                else:
-                    self.post_message(self.MessageSubmitted(text))
-            event.prevent_default()
-        elif event.key == "up":
+        # 上下键：命令弹出列表或历史记录
+        if event.key == "up":
             if self._command_popup is not None:
                 self._command_popup.move_highlight(-1)
                 event.prevent_default()
-            elif self._input.value == "" or self._history_index > 0:
+            elif self._history_index > 0:
                 self._navigate_history(-1)
                 event.prevent_default()
         elif event.key == "down":
@@ -95,6 +120,7 @@ class InputBar(Widget):
             else:
                 self._navigate_history(1)
                 event.prevent_default()
+        # Escape：关闭弹出列表或发送取消
         elif event.key == "escape":
             if self._command_popup is not None:
                 self._close_command_popup()
@@ -103,13 +129,13 @@ class InputBar(Widget):
                 self.post_message(self.CancelRequested())
                 event.prevent_default()
 
-    def on_input_changed(self, event: Input.Changed) -> None:
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """输入内容变化时检查是否需要命令补全。"""
         self._check_command_completion()
 
     def _check_command_completion(self) -> None:
         """检查当前输入是否需要显示命令补全。"""
-        text = self._input.value
+        text = self._input.text
         if text.startswith("/") and " " not in text:
             prefix = text[1:]  # 去掉 /
             if self._command_popup is None:
@@ -131,7 +157,7 @@ class InputBar(Widget):
             return
 
         if direction == -1 and self._history_index == len(self._history):
-            self._saved_draft = self._input.value
+            self._saved_draft = self._input.text
 
         new_index = self._history_index + direction
         if new_index < 0 or new_index > len(self._history):
@@ -140,15 +166,14 @@ class InputBar(Widget):
         self._history_index = new_index
 
         if self._history_index == len(self._history):
-            self._input.value = self._saved_draft
+            self._input.text = self._saved_draft
         else:
-            self._input.value = self._history[self._history_index]
+            self._input.text = self._history[self._history_index]
 
     def set_busy(self, busy: bool) -> None:
         """Toggle between busy and idle states."""
         self._busy = busy
         self._input.disabled = busy
-        self._input.placeholder = "等待中，当前任务未结束..." if busy else "输入消息..."
         if not busy:
             self._input.focus()
 

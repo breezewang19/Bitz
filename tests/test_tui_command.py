@@ -17,7 +17,7 @@ async def test_command_popup_shows_on_slash():
     app = CommandTestApp()
     async with app.run_test() as pilot:
         bar = app.query_one(InputBar)
-        bar._input.value = "/"
+        bar._input.text = "/"
         bar._check_command_completion()
         await pilot.pause()
         popups = app.query(CommandPopup)
@@ -30,7 +30,7 @@ async def test_command_popup_filters():
     app = CommandTestApp()
     async with app.run_test() as pilot:
         bar = app.query_one(InputBar)
-        bar._input.value = "/cl"
+        bar._input.text = "/cl"
         bar._check_command_completion()
         await pilot.pause()
         popup = app.query_one(CommandPopup)
@@ -46,12 +46,12 @@ async def test_command_popup_tab_completes():
     app = CommandTestApp()
     async with app.run_test() as pilot:
         bar = app.query_one(InputBar)
-        bar._input.value = "/cle"
+        bar._input.text = "/cle"
         bar._check_command_completion()
         await pilot.pause()
         await pilot.press("tab")
         await pilot.pause()
-        assert bar._input.value == "/clear "
+        assert bar._input.text == "/clear "
 
 
 @pytest.mark.asyncio
@@ -60,7 +60,7 @@ async def test_command_popup_esc_closes():
     app = CommandTestApp()
     async with app.run_test() as pilot:
         bar = app.query_one(InputBar)
-        bar._input.value = "/"
+        bar._input.text = "/"
         bar._check_command_completion()
         await pilot.pause()
         popups = app.query(CommandPopup)
@@ -78,7 +78,7 @@ async def test_command_popup_arrow_navigation():
     app = CommandTestApp()
     async with app.run_test() as pilot:
         bar = app.query_one(InputBar)
-        bar._input.value = "/"
+        bar._input.text = "/"
         bar._check_command_completion()
         await pilot.pause()
         popup = app.query_one(CommandPopup)

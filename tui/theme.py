@@ -114,14 +114,19 @@ StatusBar {
 }
 
 InputBar {
-    height: 3;
+    height: auto;
+    min-height: 3;
+    max-height: 10;
     background: $surface;
     border-top: solid $panel;
     padding: 0 1;
 }
 
-InputBar Input {
+InputBar MessageInput {
     background: $background;
     border: none;
+    height: auto;
+    min-height: 1;
+    max-height: 7;
 }
 """

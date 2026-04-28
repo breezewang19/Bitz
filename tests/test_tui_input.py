@@ -1,6 +1,6 @@
 import pytest
 from textual.app import App, ComposeResult
-from tui.widgets.input import InputBar
+from tui.widgets.input import InputBar, MessageInput
 
 
 class InputTestApp(App):
@@ -35,7 +35,7 @@ async def test_inputbar_emits_message_submitted():
     app = HandlerApp()
     async with app.run_test() as pilot:
         bar = app.query_one(InputBar)
-        bar._input.value = "hello"
+        bar._input.text = "hello"
         await pilot.press("enter")
         await pilot.pause()
 
@@ -47,10 +47,10 @@ async def test_inputbar_clears_after_submit():
     app = InputTestApp()
     async with app.run_test() as pilot:
         bar = app.query_one(InputBar)
-        bar._input.value = "hello"
+        bar._input.text = "hello"
         await pilot.press("enter")
         await pilot.pause()
-        assert bar._input.value == ""
+        assert bar._input.text == ""
 
 
 @pytest.mark.asyncio
@@ -63,15 +63,15 @@ async def test_inputbar_navigates_history():
 
         await pilot.press("up")
         await pilot.pause()
-        assert bar._input.value == "second"
+        assert bar._input.text == "second"
 
         await pilot.press("up")
         await pilot.pause()
-        assert bar._input.value == "first"
+        assert bar._input.text == "first"
 
         await pilot.press("down")
         await pilot.pause()
-        assert bar._input.value == "second"
+        assert bar._input.text == "second"
 
 
 @pytest.mark.asyncio
@@ -114,7 +114,7 @@ async def test_inputbar_theme_command():
     app = ThemeApp()
     async with app.run_test() as pilot:
         bar = app.query_one(InputBar)
-        bar._input.value = "/theme"
+        bar._input.text = "/theme"
         await pilot.press("enter")
         await pilot.pause()
 
@@ -139,7 +139,7 @@ async def test_inputbar_command_submitted_help():
     app = CmdApp()
     async with app.run_test() as pilot:
         bar = app.query_one(InputBar)
-        bar._input.value = "/help"
+        bar._input.text = "/help"
         await pilot.press("enter")
         await pilot.pause()
 
@@ -164,7 +164,7 @@ async def test_inputbar_command_submitted_theme_with_args():
     app = CmdApp()
     async with app.run_test() as pilot:
         bar = app.query_one(InputBar)
-        bar._input.value = "/theme cat-nord"
+        bar._input.text = "/theme cat-nord"
         await pilot.press("enter")
         await pilot.pause()
 

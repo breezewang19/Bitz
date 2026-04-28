@@ -27,7 +27,7 @@ async def test_command_help():
     app = BitzApp(agent=agent)
     async with app.run_test() as pilot:
         bar = app.query_one(InputBar)
-        bar._input.value = "/help"
+        bar._input.text = "/help"
         await pilot.press("enter")
         await pilot.pause(delay=0.3)
         msgs = app.query_one(ChatLog).query(AssistantMessage)
@@ -47,7 +47,7 @@ async def test_command_clear():
         chat.add_message("user", "测试消息")
         await pilot.pause()
         bar = app.query_one(InputBar)
-        bar._input.value = "/clear"
+        bar._input.text = "/clear"
         await pilot.press("enter")
         await pilot.pause(delay=0.3)
         msgs = chat.query(UserMessage)
@@ -65,7 +65,7 @@ async def test_command_compact():
     app = BitzApp(agent=agent)
     async with app.run_test() as pilot:
         bar = app.query_one(InputBar)
-        bar._input.value = "/compact"
+        bar._input.text = "/compact"
         await pilot.press("enter")
         await pilot.pause(delay=0.3)
         agent.context._trim.assert_called_once()
@@ -82,7 +82,7 @@ async def test_command_theme_cycle():
     app = BitzApp(agent=agent)
     async with app.run_test() as pilot:
         bar = app.query_one(InputBar)
-        bar._input.value = "/theme"
+        bar._input.text = "/theme"
         await pilot.press("enter")
         await pilot.pause(delay=0.3)
         # 默认主题是 cat-dark，循环后应切换到下一个
@@ -100,7 +100,7 @@ async def test_command_theme_with_valid_name():
     app = BitzApp(agent=agent)
     async with app.run_test() as pilot:
         bar = app.query_one(InputBar)
-        bar._input.value = "/theme cat-nord"
+        bar._input.text = "/theme cat-nord"
         await pilot.press("enter")
         await pilot.pause(delay=0.3)
         assert app.theme == "cat-nord"
@@ -117,7 +117,7 @@ async def test_command_theme_with_invalid_name():
     app = BitzApp(agent=agent)
     async with app.run_test() as pilot:
         bar = app.query_one(InputBar)
-        bar._input.value = "/theme nonexistent"
+        bar._input.text = "/theme nonexistent"
         await pilot.press("enter")
         await pilot.pause(delay=0.3)
         msgs = app.query_one(ChatLog).query(AssistantMessage)
@@ -133,7 +133,7 @@ async def test_command_unknown():
     app = BitzApp(agent=agent)
     async with app.run_test() as pilot:
         bar = app.query_one(InputBar)
-        bar._input.value = "/unknown"
+        bar._input.text = "/unknown"
         await pilot.press("enter")
         await pilot.pause(delay=0.3)
         msgs = app.query_one(ChatLog).query(AssistantMessage)
