@@ -5,6 +5,8 @@ from textual.widgets import Input
 from textual.message import Message
 from textual.events import Key
 
+from tui.widgets.command_popup import CommandPopup
+
 
 class InputBar(Widget):
     DEFAULT_CSS = """
@@ -45,6 +47,7 @@ class InputBar(Widget):
         self._history_index: int = 0
         self._saved_draft: str = ""
         self._busy: bool = False
+        self._command_popup: CommandPopup | None = None
 
     def compose(self):
         yield Input(placeholder="Type your message... (ESC to cancel)", id="chat-input")
@@ -54,14 +57,23 @@ class InputBar(Widget):
         return self.query_one("#chat-input", Input)
 
     def on_key(self, event: Key) -> None:
+        # Tab 补全
+        if event.key == "tab" and self._command_popup is not None:
+            cmd = self._command_popup.select_highlighted()
+            if cmd:
+                self._input.value = cmd + " "
+                self._close_command_popup()
+            event.prevent_default()
+            return
+
         if event.key == "enter":
             text = self._input.value.strip()
             if text:
                 self._history.append(text)
                 self._history_index = len(self._history)
                 self._input.value = ""
+                self._close_command_popup()
                 if text.startswith("/"):
-                    # 斜杠命令：解析命令名和参数
                     parts = text[1:].split(None, 1)
                     command = parts[0] if parts else ""
                     args = parts[1] if len(parts) > 1 else ""
@@ -70,15 +82,49 @@ class InputBar(Widget):
                     self.post_message(self.MessageSubmitted(text))
             event.prevent_default()
         elif event.key == "up":
-            if self._input.value == "" or self._history_index > 0:
+            if self._command_popup is not None:
+                self._command_popup.move_highlight(-1)
+                event.prevent_default()
+            elif self._input.value == "" or self._history_index > 0:
                 self._navigate_history(-1)
                 event.prevent_default()
         elif event.key == "down":
-            self._navigate_history(1)
-            event.prevent_default()
+            if self._command_popup is not None:
+                self._command_popup.move_highlight(1)
+                event.prevent_default()
+            else:
+                self._navigate_history(1)
+                event.prevent_default()
         elif event.key == "escape":
-            self.post_message(self.CancelRequested())
-            event.prevent_default()
+            if self._command_popup is not None:
+                self._close_command_popup()
+                event.prevent_default()
+            else:
+                self.post_message(self.CancelRequested())
+                event.prevent_default()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """输入内容变化时检查是否需要命令补全。"""
+        self._check_command_completion()
+
+    def _check_command_completion(self) -> None:
+        """检查当前输入是否需要显示命令补全。"""
+        text = self._input.value
+        if text.startswith("/") and " " not in text:
+            prefix = text[1:]  # 去掉 /
+            if self._command_popup is None:
+                self._command_popup = CommandPopup(prefix=prefix)
+                self.mount(self._command_popup)
+            else:
+                self._command_popup.update_prefix(prefix)
+        else:
+            self._close_command_popup()
+
+    def _close_command_popup(self) -> None:
+        """关闭命令补全弹出列表。"""
+        if self._command_popup is not None:
+            self._command_popup.remove()
+            self._command_popup = None
 
     def _navigate_history(self, direction: int) -> None:
         if not self._history:
