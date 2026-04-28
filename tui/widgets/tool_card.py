@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from textual.widgets import Static, Collapsible
 from rich.text import Text
+from rich.syntax import Syntax
 
 from tui.theme import COLORS
 
@@ -82,3 +83,20 @@ class ToolCard(Static):
             self._output_widget.update(display)
         if self._collapsible is not None:
             self._collapsible.collapsed = False
+
+    def set_diff(self, diff_text: str) -> None:
+        """显示 diff 内容。"""
+        self._status = "success"
+        self._output = diff_text
+        self._update_label()
+        if self._output_widget is not None:
+            # 用 rich.syntax 渲染 diff
+            try:
+                syntax = Syntax(diff_text, lexer="diff", theme="monokai")
+                self._output_widget.update(syntax)
+            except Exception:
+                # fallback: 纯文本
+                display = diff_text if len(diff_text) <= 500 else diff_text[:497] + "..."
+                self._output_widget.update(display)
+        if self._collapsible is not None:
+            self._collapsible.collapsed = False  # diff 默认展开

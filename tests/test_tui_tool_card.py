@@ -65,3 +65,19 @@ async def test_tool_card_args_summary_truncated():
     card = ToolCard(tool_name="test", args_summary=long_args)
     # 构造函数应该截断到60字符
     assert len(card._args_summary) <= 60
+
+
+@pytest.mark.asyncio
+async def test_tool_card_set_diff():
+    """set_diff 应该显示 diff 内容并展开"""
+    app = ToolCardTestApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ToolCard)
+        diff_text = "--- a/file.py\n+++ b/file.py\n@@ -1,3 +1,3 @@\n-old line\n+new line\n context line\n"
+        card.set_diff(diff_text)
+        await pilot.pause()
+        collapsible = card.query_one(Collapsible)
+        # diff 模式下应该展开
+        assert collapsible.collapsed is False
+        # 状态应该是 success
+        assert card._status == "success"
