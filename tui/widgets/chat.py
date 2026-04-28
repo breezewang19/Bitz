@@ -45,8 +45,6 @@ class AssistantMessage(Static):
     def __init__(self, content: str) -> None:
         super().__init__()
         self._content = content
-        self._streaming = False
-        self._stream_dirty = False
 
     def compose(self):
         yield MarkdownWidget(self._content)
@@ -57,36 +55,6 @@ class AssistantMessage(Static):
         try:
             md = self.query_one(MarkdownWidget)
             md.update(text)
-        except Exception:
-            pass
-
-    def start_streaming(self) -> None:
-        """进入流式模式。"""
-        self._streaming = True
-        self._stream_dirty = False
-
-    def append_content(self, text: str) -> None:
-        """追加流式文本增量。"""
-        self._content += text
-        self._stream_dirty = True
-
-    def flush_streaming(self) -> None:
-        """刷新流式内容到 Markdown 渲染（由定时器调用）。"""
-        if self._streaming and self._stream_dirty:
-            self._stream_dirty = False
-            try:
-                md = self.query_one(MarkdownWidget)
-                md.update(self._content)
-            except Exception:
-                pass
-
-    def finish_streaming(self) -> None:
-        """结束流式模式：最终 Markdown 渲染。"""
-        self._streaming = False
-        self._stream_dirty = False
-        try:
-            md = self.query_one(MarkdownWidget)
-            md.update(self._content)
         except Exception:
             pass
 
@@ -228,7 +196,6 @@ class ChatLog(VerticalScroll):
     def __init__(self) -> None:
         super().__init__()
         self._thinking_indicator: ThinkingIndicator | None = None
-        self._streaming_message: AssistantMessage | None = None
 
     def add_message(self, role: str, content: str, tool_name: str = "") -> None:
         # Only hide thinking when assistant speaks — tool calls happen mid-thinking
@@ -272,27 +239,6 @@ class ChatLog(VerticalScroll):
         if self._thinking_indicator is not None:
             self._thinking_indicator.remove()
             self._thinking_indicator = None
-
-    def start_streaming_message(self) -> None:
-        """创建空的流式 AssistantMessage。"""
-        if self._thinking_indicator is not None:
-            self._thinking_indicator.remove()
-            self._thinking_indicator = None
-        self._streaming_message = AssistantMessage("")
-        self._streaming_message.start_streaming()
-        self.mount(self._streaming_message)
-        self.call_after_refresh(self._scroll_to_bottom)
-
-    def finish_streaming_message(self) -> None:
-        """完成流式消息，切换回 Markdown 渲染。"""
-        if self._streaming_message is not None:
-            if self._streaming_message._content.strip():
-                # 有内容：切换回 Markdown 渲染
-                self._streaming_message.finish_streaming()
-            else:
-                # 无内容（错误/取消）：移除空消息
-                self._streaming_message.remove()
-            self._streaming_message = None
 
     def _scroll_to_bottom(self) -> None:
         self.scroll_end(animate=False)

@@ -3,7 +3,7 @@
 import threading
 
 from agent.context import Context
-from agent.adapter import LLMAdapter, LLMResponse, LLMError, StreamEvent
+from agent.adapter import LLMAdapter, LLMResponse, LLMError
 
 
 class Agent:
@@ -18,16 +18,14 @@ class Agent:
         self._confirmed_results: list = []   # 已确认但未写入上下文的工具结果
 
     def run(self, user_input: str, cancel_event: threading.Event = None,
-            confirmed_tools: set = None, skip_add_user: bool = False,
-            on_text_delta=None) -> str:
-        """核心循环（流式模式）
+            confirmed_tools: set = None, skip_add_user: bool = False) -> str:
+        """核心循环
 
         Args:
             user_input: 用户输入
             cancel_event: 取消事件
             confirmed_tools: 已确认的工具调用 ID 集合，用于绕过确认继续执行
             skip_add_user: 跳过添加用户消息（用于确认后继续执行）
-            on_text_delta: 文本增量回调，签名 on_text_delta(text: str)
         """
         if not skip_add_user:
             self.context.add_user(user_input)
@@ -39,38 +37,19 @@ class Agent:
             tools = self.tools.list_for_llm() if hasattr(self.tools, 'list_for_llm') else []
 
             try:
-                # 流式模式
-                full_text = ""
-                tool_uses = []
-                stop_reason = None
-
-                for event in self.llm_adapter.stream_chat(messages, tools, cancel_event=cancel_event):
-                    if event.type == "text_delta":
-                        full_text += event.content
-                        if on_text_delta:
-                            on_text_delta(event.content)
-                    elif event.type == "tool_use":
-                        tool_uses.append({
-                            "type": "tool_use",
-                            "id": event.tool_id,
-                            "name": event.tool_name,
-                            "input": event.tool_input or {},
-                        })
-                    elif event.type == "stop":
-                        stop_reason = event.stop_reason
-
+                response = self.llm_adapter.chat(messages, tools, cancel_event=cancel_event)
             except LLMError as e:
                 return f"[LLM Error] {e}"
 
-            if stop_reason == "end_turn":
-                self.context.add_assistant_text(full_text)
-                return full_text
+            if response.stop_reason == "end_turn":
+                self.context.add_assistant_text(response.content)
+                return response.content
 
-            if stop_reason == "tool_use":
+            if response.stop_reason == "tool_use":
                 pending_tools = []
                 confirmed_results = []
 
-                for tool_use in tool_uses:
+                for tool_use in response.content:
                     tool_name = tool_use["name"]
                     tool_args = tool_use["input"]
                     tool_id = tool_use["id"]
@@ -86,18 +65,18 @@ class Agent:
                 if pending_tools:
                     tool_id, tool_name, tool_args, result = pending_tools[0]
                     self._pending_confirm = (tool_id, tool_name, tool_args, result)
-                    self._pending_response = tool_uses
+                    self._pending_response = response.content
                     self._confirmed_results = confirmed_results
                     return result
 
-                self.context.add_assistant_message(tool_uses)
+                self.context.add_assistant_message(response.content)
                 self.context.add_tool_results(
                     [(tool_id, result) for tool_id, tool_name, tool_args, result in confirmed_results]
                 )
                 continue
 
-            if stop_reason == "max_tokens":
-                self.context.add_assistant_text(full_text)
+            if response.stop_reason == "max_tokens":
+                self.context.add_assistant_text(response.content)
                 self.context.add_user("请继续输出，不要重复已说过的内容。")
                 continue
 
@@ -112,7 +91,6 @@ class Agent:
         confirmed_tools.add(tool_id)
         self._pending_confirm = None
 
-        # 添加完整的 assistant 消息（包含所有 tool_use blocks）
         response_content = getattr(self, '_pending_response', None)
         if response_content:
             self.context.add_assistant_message(response_content)
@@ -125,10 +103,8 @@ class Agent:
                 "input": tool_args
             }])
 
-        # 执行确认的工具
         result = self.tools.execute(tool_name, tool_args, confirmed=True, tool_id=tool_id)
 
-        # 收集所有工具结果：之前已确认的 + 刚确认的
         all_results = list(self._confirmed_results)
         all_results.append((tool_id, tool_name, tool_args, result))
         self._confirmed_results = []
