@@ -118,3 +118,53 @@ async def test_inputbar_theme_command():
         await pilot.pause()
 
     assert len(theme_requested) == 1
+
+
+@pytest.mark.asyncio
+async def test_inputbar_command_submitted_help():
+    """测试 /help 发送 CommandSubmitted 消息，command='help'。"""
+    commands = []
+
+    class CmdApp(App):
+        CSS = ""
+
+        def compose(self) -> ComposeResult:
+            yield InputBar()
+
+        def on_input_bar_command_submitted(self, event: InputBar.CommandSubmitted) -> None:
+            commands.append((event.command, event.args))
+            self.exit()
+
+    app = CmdApp()
+    async with app.run_test() as pilot:
+        bar = app.query_one(InputBar)
+        bar._input.value = "/help"
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert commands == [("help", "")]
+
+
+@pytest.mark.asyncio
+async def test_inputbar_command_submitted_theme_with_args():
+    """测试 /theme cat-nord 发送 CommandSubmitted 消息，command='theme', args='cat-nord'。"""
+    commands = []
+
+    class CmdApp(App):
+        CSS = ""
+
+        def compose(self) -> ComposeResult:
+            yield InputBar()
+
+        def on_input_bar_command_submitted(self, event: InputBar.CommandSubmitted) -> None:
+            commands.append((event.command, event.args))
+            self.exit()
+
+    app = CmdApp()
+    async with app.run_test() as pilot:
+        bar = app.query_one(InputBar)
+        bar._input.value = "/theme cat-nord"
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert commands == [("theme", "cat-nord")]

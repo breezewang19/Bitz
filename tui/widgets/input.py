@@ -34,6 +34,14 @@ class InputBar(Widget):
     class ThemeChangeRequested(Message):
         pass
 
+    class CommandSubmitted(Message):
+        """斜杠命令消息，当输入以 / 开头时触发。"""
+
+        def __init__(self, command: str, args: str = "") -> None:
+            super().__init__()
+            self.command = command  # 命令名（不含 /）
+            self.args = args        # 命令参数
+
     def __init__(self) -> None:
         super().__init__()
         self._history: list[str] = []
@@ -55,8 +63,16 @@ class InputBar(Widget):
                 self._history.append(text)
                 self._history_index = len(self._history)
                 self._input.value = ""
-                if text == "/theme":
-                    self.post_message(self.ThemeChangeRequested())
+                if text.startswith("/"):
+                    # 斜杠命令：解析命令名和参数
+                    parts = text[1:].split(None, 1)
+                    command = parts[0] if parts else ""
+                    args = parts[1] if len(parts) > 1 else ""
+                    # /theme 仍发送 ThemeChangeRequested 以保持向后兼容
+                    if command == "theme" and not args:
+                        self.post_message(self.ThemeChangeRequested())
+                    else:
+                        self.post_message(self.CommandSubmitted(command, args))
                 else:
                     self.post_message(self.MessageSubmitted(text))
             event.prevent_default()
