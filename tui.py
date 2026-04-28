@@ -24,17 +24,22 @@ def main():
         from agent.loop import Agent
         from agent.builtin_tools import create_tools
         from agent.prompt import build_system_prompt
+        from agent.models import ModelStore
         from tui import BitzApp
 
-        api_key = os.getenv("ANTHROPIC_API_KEY", "")
-        base_url = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
-        model_name = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+        store = ModelStore()
+        current = store.init_from_env()
 
-        if not api_key or api_key == "sk-ant-test":
+        if not current.api_key:
             print("Error: Please set ANTHROPIC_API_KEY in .env file")
             sys.exit(1)
 
-        adapter = LLMAdapter(api_key=api_key, base_url=base_url, model=model_name)
+        adapter = LLMAdapter(
+            api_key=current.api_key,
+            base_url=current.base_url,
+            model=current.model,
+            protocol=current.protocol,
+        )
         context = Context(
             system_prompt=build_system_prompt(cwd=os.getcwd()),
             max_tokens=4096,
@@ -48,7 +53,7 @@ def main():
             max_steps=20,
         )
 
-        app = BitzApp(agent=agent)
+        app = BitzApp(agent=agent, model_store=store)
         app.run()
 
 
