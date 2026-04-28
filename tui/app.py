@@ -28,9 +28,10 @@ class BitzApp(App):
         ("ctrl+l", "clear_screen", "Clear"),
     ]
 
-    def __init__(self, agent: Agent, **kwargs) -> None:
+    def __init__(self, agent: Agent, model_store=None, **kwargs) -> None:
         super().__init__(**kwargs)
         self._agent = agent
+        self._model_store = model_store
         self._original_execute = agent.tools.execute
         self._cancel_event = threading.Event()
         self._confirmed_tools: set = set()
@@ -50,7 +51,7 @@ class BitzApp(App):
 
     def on_mount(self) -> None:
         chat = self.query_one(ChatLog)
-        model_name = os.getenv("ANTHROPIC_MODEL", "unknown")
+        model_name = self._agent.llm_adapter.model
         chat.mount(BannerWidget(model_name=model_name))
         status = self.query_one(StatusBar)
         status.update_model(model_name)
@@ -214,6 +215,9 @@ class BitzApp(App):
                 "| `/clear` | 清屏 |\n"
                 "| `/compact` | 压缩上下文 |\n"
                 "| `/theme [name]` | 切换主题（无参数时循环切换）|\n"
+                "| `/models list` | 列出已配置模型 |\n"
+                "| `/models add <id> <protocol> <base_url> <api_key> <model>` | 添加模型 |\n"
+                "| `/models <id>` | 切换模型 |\n"
             )
             chat.add_message("assistant", help_text)
         elif command == "clear":
@@ -242,8 +246,77 @@ class BitzApp(App):
                     next_idx = 0
                 self.theme = THEME_NAMES[next_idx]
                 chat.add_message("assistant", f"主题已切换为 {THEME_NAMES[next_idx]}")
+        elif command == "models":
+            self._handle_models_command(args, chat)
         else:
             chat.add_message("assistant", f"未知命令: /{command}。输入 /help 查看可用命令。")
+
+    def _handle_models_command(self, args: str, chat: ChatLog) -> None:
+        """处理 /models 命令"""
+        if not self._model_store:
+            chat.add_message("assistant", "模型管理未启用")
+            return
+
+        parts = args.strip().split()
+
+        if not parts or parts[0] == "list":
+            models = self._model_store.list_all()
+            current = self._model_store.get_current()
+            current_id = current.id if current else None
+            rows = []
+            for m in models:
+                marker = " ←" if m.id == current_id else ""
+                rows.append(f"| {m.id} | {m.protocol} | {m.model} | {m.masked_key()} |{marker}")
+            table = (
+                "## 已配置模型\n\n"
+                "| ID | 协议 | 模型 | API Key |\n"
+                "|------|------|------|--------|\n"
+                + "\n".join(rows)
+            )
+            chat.add_message("assistant", table)
+
+        elif parts[0] == "add":
+            if len(parts) != 6:
+                chat.add_message("assistant", "用法: /models add <id> <protocol> <base_url> <api_key> <model>")
+                return
+            id_, protocol, base_url, api_key, model = parts[1:]
+            if protocol not in ("openai", "anthropic"):
+                chat.add_message("assistant", f"不支持的协议: {protocol}，可选: openai, anthropic")
+                return
+            try:
+                from agent.models import ModelConfig
+                config = ModelConfig(id=id_, protocol=protocol, base_url=base_url, api_key=api_key, model=model)
+                self._model_store.add(config)
+                chat.add_message("assistant", f"模型 '{id_}' 已添加")
+            except ValueError as e:
+                chat.add_message("assistant", str(e))
+
+        else:
+            # 切换模型: /models <id>
+            model_id = parts[0]
+            config = self._model_store.get(model_id)
+            if config is None:
+                chat.add_message("assistant", f"模型 '{model_id}' 不存在")
+                return
+            self._switch_model(config)
+
+    def _switch_model(self, config) -> None:
+        """切换当前模型"""
+        adapter = self._agent.llm_adapter
+        adapter.api_key = config.api_key
+        adapter.base_url = config.base_url
+        adapter.model = config.model
+        adapter.protocol = config.protocol
+        if config.protocol == "openai":
+            adapter.api_url = f"{config.base_url}/chat/completions"
+        else:
+            adapter.api_url = f"{config.base_url}/v1/messages"
+        adapter._last_usage = None
+        self._model_store.set_current(config.id)
+        status = self.query_one(StatusBar)
+        status.update_model(config.model)
+        chat = self.query_one(ChatLog)
+        chat.add_message("assistant", f"已切换到模型: {config.id} ({config.protocol}/{config.model})")
 
     def on_key(self, event: Key) -> None:
         # Handle y/n keys directly during confirm mode

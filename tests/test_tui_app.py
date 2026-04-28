@@ -140,3 +140,81 @@ async def test_command_unknown():
         assert len(msgs) >= 1
         last_msg = msgs.last()
         assert "未知命令" in last_msg._content
+
+
+def make_mock_model_store():
+    """创建模拟 ModelStore。"""
+    from agent.models import ModelConfig
+    store = MagicMock()
+    store.list_all.return_value = [
+        ModelConfig(id="default", protocol="anthropic", base_url="https://api.anthropic.com", api_key="sk-test-key", model="claude-3-5-sonnet-20241022"),
+    ]
+    store.get_current.return_value = ModelConfig(id="default", protocol="anthropic", base_url="https://api.anthropic.com", api_key="sk-test-key", model="claude-3-5-sonnet-20241022")
+    return store
+
+
+@pytest.mark.asyncio
+async def test_command_models_list():
+    """测试 /models list 命令"""
+    agent = make_mock_agent()
+    store = make_mock_model_store()
+    app = BitzApp(agent=agent, model_store=store)
+    async with app.run_test() as pilot:
+        bar = app.query_one(InputBar)
+        bar._input.text = "/models list"
+        await pilot.press("enter")
+        await pilot.pause(delay=0.3)
+        msgs = app.query_one(ChatLog).query(AssistantMessage)
+        assert len(msgs) >= 1
+        last_msg = msgs.last()
+        assert "default" in last_msg._content
+
+
+@pytest.mark.asyncio
+async def test_command_models_switch():
+    """测试 /models <id> 切换模型"""
+    agent = make_mock_agent()
+    store = make_mock_model_store()
+    from agent.models import ModelConfig
+    store.get.return_value = ModelConfig(id="gpt-4o", protocol="openai", base_url="https://api.openai.com/v1", api_key="sk-openai", model="gpt-4o")
+    app = BitzApp(agent=agent, model_store=store)
+    async with app.run_test() as pilot:
+        bar = app.query_one(InputBar)
+        bar._input.text = "/models gpt-4o"
+        await pilot.press("enter")
+        await pilot.pause(delay=0.3)
+        store.set_current.assert_called_once_with("gpt-4o")
+        assert agent.llm_adapter.api_key == "sk-openai"
+        assert agent.llm_adapter.protocol == "openai"
+        assert agent.llm_adapter.model == "gpt-4o"
+
+
+@pytest.mark.asyncio
+async def test_command_models_add():
+    """测试 /models add 命令"""
+    agent = make_mock_agent()
+    store = make_mock_model_store()
+    app = BitzApp(agent=agent, model_store=store)
+    async with app.run_test() as pilot:
+        bar = app.query_one(InputBar)
+        bar._input.text = "/models add gpt-4o openai https://api.openai.com/v1 sk-test gpt-4o"
+        await pilot.press("enter")
+        await pilot.pause(delay=0.3)
+        store.add.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_command_models_add_invalid_protocol():
+    """测试 /models add 使用无效协议"""
+    agent = make_mock_agent()
+    store = make_mock_model_store()
+    app = BitzApp(agent=agent, model_store=store)
+    async with app.run_test() as pilot:
+        bar = app.query_one(InputBar)
+        bar._input.text = "/models add test badproto https://api.example.com sk-test model"
+        await pilot.press("enter")
+        await pilot.pause(delay=0.3)
+        msgs = app.query_one(ChatLog).query(AssistantMessage)
+        assert len(msgs) >= 1
+        last_msg = msgs.last()
+        assert "不支持的协议" in last_msg._content
