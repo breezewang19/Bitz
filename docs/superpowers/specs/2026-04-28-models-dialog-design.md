@@ -74,6 +74,10 @@
 - 确认 → `ModelStore.remove(id)` → dismiss 返回 `("deleted", id)`
 - 取消 → dismiss 返回 `None`
 
+**约束：**
+- 不允许删除当前正在使用的模型（按钮置灰或点击后提示"请先切换到其他模型"）
+- 不允许删除最后一个模型（至少保留一个）
+
 ### 4. ModelStore 新增 `remove()` 方法
 
 ```python
@@ -126,15 +130,24 @@ def _on_models_result(self, result):
     elif action == "add":
         self.app.push_screen(ModelAddScreen(), self._on_model_added)
     elif action == "delete":
+        # 不允许删除当前模型
+        if data == self._model_store.get_current().id:
+            chat = self.query_one(ChatLog)
+            chat.add_message("assistant", "无法删除当前使用的模型，请先切换")
+            return
         self.app.push_screen(ModelConfirmScreen(data), self._on_model_deleted)
 
 def _on_model_added(self, result):
     if result is None:
         return
     config = result  # ModelConfig
-    self._model_store.add(config)
-    chat = self.query_one(ChatLog)
-    chat.add_message("assistant", f"模型 '{config.id}' 已添加")
+    try:
+        self._model_store.add(config)
+        chat = self.query_one(ChatLog)
+        chat.add_message("assistant", f"模型 '{config.id}' 已添加")
+    except ValueError as e:
+        # 重复 ID 等错误 → 重新弹出添加表单并显示错误
+        self.app.push_screen(ModelAddScreen(error=str(e)), self._on_model_added)
 
 def _on_model_deleted(self, result):
     if result is None:
