@@ -4,6 +4,7 @@ import shutil
 import unicodedata
 
 from textual.widgets import Static
+from textual.widgets import Markdown as MarkdownWidget
 from textual.message import Message
 from textual.containers import VerticalScroll
 from rich.text import Text
@@ -54,9 +55,10 @@ class UserMessage(Static):
 class AssistantMessage(Static):
     DEFAULT_CSS = """
     AssistantMessage {
-        color: #f8f8f2;
+        color: $text;
         margin: 0 0 1 0;
         padding: 0 1;
+        height: auto;
     }
     """
 
@@ -64,17 +66,16 @@ class AssistantMessage(Static):
         super().__init__()
         self._content = content
 
-    def render(self) -> Text:
-        lines = self._content.split("\n")
-        parts: list[Text] = []
-        for i, line in enumerate(lines):
-            if i > 0:
-                parts.append(Text("\n"))
-            if i == 0:
-                parts.append(Text(f"  {line}", style=f"bold {COLORS['assistant']}"))
-            else:
-                parts.append(Text(f"  {line}", style=COLORS['assistant']))
-        return Text.assemble(*parts)
+    def compose(self):
+        yield MarkdownWidget(self._content)
+
+    def update_content(self, text: str) -> None:
+        """更新 Markdown 内容（供流式输出使用）。"""
+        try:
+            md = self.query_one(MarkdownWidget)
+            md.update(text)
+        except Exception:
+            pass
 
 
 class ThinkingIndicator(Static):

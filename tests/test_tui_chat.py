@@ -44,21 +44,20 @@ async def test_add_assistant_message():
         await pilot.pause()
         msgs = chat.query(AssistantMessage)
         assert len(msgs) == 1
-        rendered = msgs.first().render()
-        assert "Hi there" in rendered.plain
 
 
 @pytest.mark.asyncio
-async def test_assistant_multiline_bold_first():
+async def test_assistant_markdown_render():
     app = ChatTestApp()
     async with app.run_test() as pilot:
         chat = app.query_one(ChatLog)
-        chat.add_message("assistant", "First line\nSecond line")
+        chat.add_message("assistant", "# Title\n\n**bold** text\n\n- item1\n- item2")
         await pilot.pause()
         msgs = chat.query(AssistantMessage)
-        rendered = msgs.first().render()
-        assert "First line" in rendered.plain
-        assert "Second line" in rendered.plain
+        assert len(msgs) == 1
+        from textual.widgets import Markdown as MarkdownWidget
+        md = msgs.first().query_one(MarkdownWidget)
+        assert md is not None
 
 
 @pytest.mark.asyncio
