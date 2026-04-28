@@ -77,9 +77,8 @@ The `learning/` directory contains progressive tutorials:
 | 01 | Agent Loop | ReAct pattern, tool calling, max steps |
 | 02 | LLM Adapter | Anthropic API, retry with backoff, cancellation |
 | 03 | Tools & Context | Tool registry, danger detection, context trimming |
-| 04 | TUI with Textual | Layout, events, thread safety, confirm flow |
-| 05 | TUI Aesthetics | Markdown, tool cards, themes, timing, status bar |
-| 06 | TUI Experience | Slash commands, multi-line input, streaming, diff view |
+| 04 | TUI with Textual | Layout, events, thread safety, confirm flow, aesthetics, experience |
+| 05 | Prompt Engineering | Layered prompts, dynamic injection, tool descriptions, caching |
 
 ## Conventions
 
