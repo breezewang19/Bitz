@@ -27,12 +27,6 @@ class ToolCard(Static):
     }
     """
 
-    class ToolDone(Message):
-        def __init__(self, tool_name: str, success: bool) -> None:
-            super().__init__()
-            self.tool_name = tool_name
-            self.success = success
-
     def __init__(self, tool_name: str, args_summary: str = "") -> None:
         super().__init__()
         self._tool_name = tool_name
