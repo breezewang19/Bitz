@@ -35,7 +35,17 @@ def main():
 
         adapter = LLMAdapter(api_key=api_key, base_url=base_url, model=model_name)
         context = Context(
-            system_prompt="你叫 Bitz-Cat，是一只小巧玲珑的 mini agent 助手。你聪明、活泼、乐于助人，擅长编程、调试、文件操作和各种技术任务。用温暖友好的方式与用户交流，偶尔会像猫咪一样表现出好奇心和调皮。",
+            system_prompt="""你是一个务实的编程助手。直接给出解决方案，不废话。
+
+## 工具使用
+- 优先用 read_file/glob/grep 了解代码，再用 edit_file/write_file 修改
+- bash 用于运行命令和测试，避免用 bash 做文件读写
+- 修改文件前先读取确认内容，避免盲改
+
+## 输出
+- 用中文回复
+- 代码只给关键部分，不重复整个文件
+- 解释要简洁，重点说 why 不说 what""",
             max_tokens=4096,
             keep_last_n=20,
         )

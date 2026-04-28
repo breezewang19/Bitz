@@ -4,7 +4,7 @@ import threading
 from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
-from agent.adapter import LLMAdapter, LLMResponse, LLMError, StreamEvent
+from agent.adapter import LLMAdapter, LLMResponse, LLMError
 
 
 class TestLLMAdapterChat:
@@ -118,70 +118,3 @@ class TestLLMAdapterCancel:
                 tools=[],
                 cancel_event=cancel
             )
-
-
-class TestStreamChat:
-    @patch("anthropic.Anthropic")
-    def test_stream_chat_yields_text_deltas(self, mock_anthropic_cls):
-        """stream_chat() 应该 yield text_delta 事件"""
-        mock_client = MagicMock()
-        mock_anthropic_cls.return_value = mock_client
-
-        # 模拟流式响应
-        mock_stream_manager = MagicMock()
-        mock_stream = MagicMock()
-
-        # 构造流式事件
-        event1 = MagicMock()
-        event1.type = "message_start"
-        event1.message = MagicMock()
-        event1.message.usage = MagicMock(input_tokens=10, output_tokens=0)
-
-        event2 = MagicMock()
-        event2.type = "content_block_start"
-        event2.content_block = MagicMock(type="text", text="")
-
-        event3 = MagicMock()
-        event3.type = "content_block_delta"
-        event3.delta = MagicMock(type="text_delta")
-        event3.delta.text = "Hello"
-
-        event4 = MagicMock()
-        event4.type = "content_block_stop"
-
-        event5 = MagicMock()
-        event5.type = "message_delta"
-        event5.delta = MagicMock(stop_reason="end_turn")
-        event5.usage = MagicMock(output_tokens=5)
-
-        event6 = MagicMock()
-        event6.type = "message_stop"
-
-        mock_stream.__iter__ = MagicMock(return_value=iter([event1, event2, event3, event4, event5, event6]))
-        mock_stream_manager.__enter__ = MagicMock(return_value=mock_stream)
-        mock_stream_manager.__exit__ = MagicMock(return_value=False)
-        mock_client.messages.stream.return_value = mock_stream_manager
-
-        adapter = LLMAdapter(api_key="test-key", model="test-model")
-        events = list(adapter.stream_chat(
-            messages=[{"role": "user", "content": "hi"}],
-            tools=[],
-        ))
-
-        text_deltas = [e for e in events if e.type == "text_delta"]
-        assert len(text_deltas) >= 1
-        assert text_deltas[0].content == "Hello"
-
-    def test_stream_event_types(self):
-        """StreamEvent 应该有正确的类型"""
-        e1 = StreamEvent(type="text_delta", content="hi")
-        assert e1.type == "text_delta"
-        assert e1.content == "hi"
-
-        e2 = StreamEvent(type="tool_use", tool_id="t1", tool_name="bash", tool_input={"cmd": "ls"})
-        assert e2.type == "tool_use"
-        assert e2.tool_name == "bash"
-
-        e3 = StreamEvent(type="stop", stop_reason="end_turn")
-        assert e3.type == "stop"
-        assert e3.stop_reason == "end_turn"

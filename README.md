@@ -14,7 +14,6 @@ A minimal AI Agent with a beautiful terminal chat interface — under 1000 lines
 - **Session Insights** — Token usage tracking, per-turn timing, step counter
 - **Slash Commands** — /help, /clear, /compact, /theme with Tab autocomplete
 - **Multi-line Input** — Shift+Enter for newline, auto-expanding textarea
-- **Streaming Output** — Real-time SSE streaming with incremental Markdown rendering
 - **Code Diff View** — Inline diff for file edits with syntax highlighting
 - **Mouse Support** — Scroll, click to expand/collapse, cursor positioning
 - **Inline Confirmation** — Dangerous commands show y/n prompt right in the chat

@@ -1,10 +1,10 @@
-# 06 — TUI 体验增强：斜杠命令、多行输入、流式输出、代码 diff 与鼠标
+# 06 — TUI 体验增强：斜杠命令、多行输入、代码 diff 与鼠标
 
 > 前置：[05-tui-aesthetics.md](05-tui-aesthetics.md) — Markdown、工具卡片、主题与状态增强
 
-上一章我们让 Bitz 看起来很美：Markdown 渲染、折叠工具卡片、主题切换、状态栏和计时。但交互体验还不够好——没有命令系统，只能单行输入，输出要等全部生成完才显示，文件编辑没有 diff 视图。
+上一章我们让 Bitz 看起来很美：Markdown 渲染、折叠工具卡片、主题切换、状态栏和计时。但交互体验还不够好——没有命令系统，只能单行输入，文件编辑没有 diff 视图。
 
-本章我们给 Bitz 加上五个体验增强功能，从最简单到最复杂，每个都对应一个核心设计模式。
+本章我们给 Bitz 加上四个体验增强功能，从最简单到最复杂，每个都对应一个核心设计模式。
 
 ---
 
@@ -119,93 +119,7 @@ InputBar MessageInput {
 
 ---
 
-## 6.3 流式输出
-
-### 问题
-
-LLM 生成文本需要时间，用户必须等全部内容生成完才能看到。长回复时等待体验很差。
-
-### 方案：三层流式架构
-
-流式输出涉及三层改动：Adapter → Agent Loop → UI。
-
-**Adapter 层**：新增 `StreamEvent` 和 `stream_chat()`：
-
-```python
-@dataclass
-class StreamEvent:
-    type: str  # text_delta | tool_use | stop
-    content: str = ""       # text_delta 内容
-    tool_id: str = ""       # tool_use ID
-    tool_name: str = ""     # tool_use 名称
-    tool_input: dict = None # tool_use 参数
-    stop_reason: str = ""   # stop 原因
-```
-
-`stream_chat()` 使用 Anthropic SDK 的 `client.messages.stream()` 上下文管理器，yield `StreamEvent` 生成器：
-
-```python
-def stream_chat(self, messages, tools, cancel_event=None):
-    with client.messages.stream(**kwargs) as stream:
-        for event in stream:
-            if event.type == "content_block_delta":
-                if event.delta.type == "text_delta":
-                    yield StreamEvent(type="text_delta", content=event.delta.text)
-            elif event.type == "content_block_start":
-                if event.content_block.type == "tool_use":
-                    current_tool_id = event.content_block.id
-                    current_tool_name = event.content_block.name
-            elif event.type == "message_stop":
-                final = stream.get_final_message()
-                self._last_usage = final.usage
-                yield StreamEvent(type="stop", stop_reason=final.stop_reason)
-```
-
-**Agent Loop 层**：`run()` 改为流式模式，接受 `on_text_delta` 回调：
-
-```python
-def run(self, user_input, cancel_event=None, confirmed_tools=None,
-        skip_add_user=False, on_text_delta=None) -> str:
-    for event in self.llm_adapter.stream_chat(messages, tools, cancel_event):
-        if event.type == "text_delta":
-            full_text += event.content
-            if on_text_delta:
-                on_text_delta(event.content)
-        elif event.type == "tool_use":
-            tool_uses.append(...)
-        elif event.type == "stop":
-            stop_reason = event.stop_reason
-```
-
-**UI 层**：`ChatLog` 创建空的 `AssistantMessage`，每次 `text_delta` 到达时追加内容：
-
-```python
-# BitzApp 注册回调
-def _on_text_delta(self, text: str) -> None:
-    self.call_from_thread(self._update_streaming_message, text)
-
-# ChatLog 流式方法
-def start_streaming_message(self) -> None:
-    self._streaming_message = AssistantMessage("")
-    self.mount(self._streaming_message)
-
-def finish_streaming_message(self) -> None:
-    if self._streaming_message is not None:
-        self._streaming_message.update_content(self._streaming_message._content)
-        self._streaming_message = None
-```
-
-### 线程安全
-
-`on_text_delta` 回调从 agent 线程调用，必须通过 `call_from_thread` 调度到主线程更新 UI。这是 Textual 的线程安全铁律——从后台线程更新 UI 的唯一正确方式。
-
-### 性能考虑
-
-`MarkdownWidget.update()` 每次调用都会重新渲染整个 Markdown。对于流式场景，每个 `text_delta` 都触发一次重渲染可能太频繁。当前实现不做节流——Textual 的渲染队列会自然合并快速更新。如果未来发现性能问题，可以加 100ms 节流。
-
----
-
-## 6.4 代码 diff 视图
+## 6.3 代码 diff 视图
 
 ### 问题
 
@@ -262,7 +176,7 @@ def set_diff(self, diff_text: str) -> None:
 
 ---
 
-## 6.5 鼠标支持
+## 6.4 鼠标支持
 
 ### 问题
 
@@ -282,7 +196,6 @@ Textual 默认启用鼠标，无需任何代码。滚轮滚动 ChatLog、点击�
 |------|---------|---------|
 | 斜杠命令与补全 | 消息分发 + 弹出列表 | CommandSubmitted 消息，CommandPopup 过滤 |
 | 多行输入 | 组件替换 + 事件拦截 | MessageInput(TextArea)，Enter/Shift+Enter |
-| 流式输出 | 三层架构 + 回调 | StreamEvent 生成器，on_text_delta 回调，call_from_thread |
 | 代码 diff 视图 | monkey-patch 拦截 + 渲染 | difflib.unified_diff，rich.syntax.Syntax |
 | 鼠标支持 | 框架内置 | Textual 默认启用 |
 
@@ -290,6 +203,5 @@ Textual 默认启用鼠标，无需任何代码。滚轮滚动 ChatLog、点击�
 
 1. **消息机制是组件间通信的标准方式**——InputBar 只分发，BitzApp 只处理
 2. **组件替换要保留接口**——MessageInput 替换 Input，但 InputBar 的外部接口不变
-3. **流式架构的关键是回调 + 线程安全**——on_text_delta 从 agent 线程到 UI 线程，必须用 call_from_thread
-4. **monkey-patch 是最小侵入的集成方式**——不改 agent/ 接口，只扩展 tool logger 的参数
-5. **用框架内置能力**——Textual 的鼠标支持、rich.syntax 的 diff 渲染都是现成的
+3. **monkey-patch 是最小侵入的集成方式**——不改 agent/ 接口，只扩展 tool logger 的参数
+4. **用框架内置能力**——Textual 的鼠标支持、rich.syntax 的 diff 渲染都是现成的

@@ -5,7 +5,7 @@ import threading
 import time
 from unittest.mock import MagicMock, patch
 
-from agent.adapter import LLMAdapter, LLMResponse, LLMError, StreamEvent
+from agent.adapter import LLMAdapter, LLMResponse, LLMError
 from agent.loop import Agent
 from agent.context import Context
 
@@ -77,10 +77,9 @@ class TestAgentCancel:
     def test_agent_run_with_cancel_event(self):
         """Agent.run 接受 cancel_event 参数"""
         mock_adapter = MagicMock()
-        mock_adapter.stream_chat.return_value = iter([
-            StreamEvent(type="text_delta", content="Hello"),
-            StreamEvent(type="stop", stop_reason="end_turn"),
-        ])
+        mock_adapter.chat.return_value = LLMResponse(
+            content="Hello", stop_reason="end_turn"
+        )
         mock_tools = MagicMock()
         ctx = Context(system_prompt="test")
 
@@ -95,14 +94,14 @@ class TestAgentCancel:
         result = agent.run("hi", cancel_event=cancel)
         assert result == "Hello"
 
-        # 验证 cancel_event 被传递给 adapter.stream_chat
-        call_kwargs = mock_adapter.stream_chat.call_args[1]
+        # 验证 cancel_event 被传递给 adapter.chat
+        call_kwargs = mock_adapter.chat.call_args[1]
         assert call_kwargs.get('cancel_event') is cancel
 
     def test_agent_run_cancel_during_request(self):
         """Agent 循环中取消请求，返回 LLMError 信息"""
         mock_adapter = MagicMock()
-        mock_adapter.stream_chat.side_effect = LLMError("已中断")
+        mock_adapter.chat.side_effect = LLMError("已中断")
         mock_tools = MagicMock()
         ctx = Context(system_prompt="test")
 
@@ -123,11 +122,11 @@ class TestAgentCancel:
         mock_adapter = MagicMock()
         mock_tools = MagicMock()
 
-        mock_adapter.stream_chat.side_effect = [
-            iter([
-                StreamEvent(type="tool_use", tool_id="t1", tool_name="echo", tool_input={}),
-                StreamEvent(type="stop", stop_reason="tool_use"),
-            ]),
+        mock_adapter.chat.side_effect = [
+            LLMResponse(
+                content=[{"type": "tool_use", "id": "t1", "name": "echo", "input": {}}],
+                stop_reason="tool_use",
+            ),
             LLMError("用户按 ESC 取消了请求")
         ]
         mock_tools.execute.return_value = "result"
@@ -147,10 +146,9 @@ class TestAgentCancel:
     def test_agent_run_without_cancel_event(self):
         """不传 cancel_event 时正常工作（向后兼容）"""
         mock_adapter = MagicMock()
-        mock_adapter.stream_chat.return_value = iter([
-            StreamEvent(type="text_delta", content="Hello"),
-            StreamEvent(type="stop", stop_reason="end_turn"),
-        ])
+        mock_adapter.chat.return_value = LLMResponse(
+            content="Hello", stop_reason="end_turn"
+        )
         mock_tools = MagicMock()
         ctx = Context(system_prompt="test")
 
