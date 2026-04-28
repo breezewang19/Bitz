@@ -469,9 +469,6 @@ class BitzApp(App):
         from tui.widgets.chat import TurnTiming
         chat = self.query_one(ChatLog)
         # 流式消息已经在 chat 中了，不需要再 add_message
-        # 但如果流式消息为空（非流式路径），仍然需要添加
-        if chat._streaming_message is None:
-            chat.add_message("assistant", result)
         self._mount_turn_timing(chat)
         self._step_count += 1
         status = self.query_one(StatusBar)
@@ -499,6 +496,9 @@ class BitzApp(App):
         try:
             while True:
                 chat.update_thinking()
+                # 流式刷新：每 80ms 将累积的 text_delta 渲染到 Markdown
+                if chat._streaming_message is not None:
+                    chat._streaming_message.flush_streaming()
                 if self._turn_start > 0 and chat._thinking_indicator is not None:
                     elapsed = time.monotonic() - self._turn_start
                     chat._thinking_indicator.set_elapsed(elapsed)

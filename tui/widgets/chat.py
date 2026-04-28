@@ -45,21 +45,45 @@ class AssistantMessage(Static):
     def __init__(self, content: str) -> None:
         super().__init__()
         self._content = content
+        self._streaming = False
+        self._stream_dirty = False
 
     def compose(self):
         yield MarkdownWidget(self._content)
 
     def update_content(self, text: str) -> None:
-        """更新 Markdown 内容（供流式输出使用）。"""
+        """更新 Markdown 内容。"""
+        self._content = text
         try:
             md = self.query_one(MarkdownWidget)
             md.update(text)
         except Exception:
             pass
 
+    def start_streaming(self) -> None:
+        """进入流式模式。"""
+        self._streaming = True
+        self._stream_dirty = False
+
     def append_content(self, text: str) -> None:
         """追加流式文本增量。"""
         self._content += text
+        self._stream_dirty = True
+
+    def flush_streaming(self) -> None:
+        """刷新流式内容到 Markdown 渲染（由定时器调用）。"""
+        if self._streaming and self._stream_dirty:
+            self._stream_dirty = False
+            try:
+                md = self.query_one(MarkdownWidget)
+                md.update(self._content)
+            except Exception:
+                pass
+
+    def finish_streaming(self) -> None:
+        """结束流式模式：最终 Markdown 渲染。"""
+        self._streaming = False
+        self._stream_dirty = False
         try:
             md = self.query_one(MarkdownWidget)
             md.update(self._content)
@@ -255,13 +279,19 @@ class ChatLog(VerticalScroll):
             self._thinking_indicator.remove()
             self._thinking_indicator = None
         self._streaming_message = AssistantMessage("")
+        self._streaming_message.start_streaming()
         self.mount(self._streaming_message)
         self.call_after_refresh(self._scroll_to_bottom)
 
     def finish_streaming_message(self) -> None:
-        """完成流式消息，将 Markdown 重新渲染。"""
+        """完成流式消息，切换回 Markdown 渲染。"""
         if self._streaming_message is not None:
-            self._streaming_message.update_content(self._streaming_message._content)
+            if self._streaming_message._content.strip():
+                # 有内容：切换回 Markdown 渲染
+                self._streaming_message.finish_streaming()
+            else:
+                # 无内容（错误/取消）：移除空消息
+                self._streaming_message.remove()
             self._streaming_message = None
 
     def _scroll_to_bottom(self) -> None:
