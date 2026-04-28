@@ -1,7 +1,7 @@
 import pytest
 from textual.app import App, ComposeResult
 from tui.widgets.chat import (
-    ChatLog, UserMessage, AssistantMessage, ThinkingIndicator, ToolMessage,
+    ChatLog, UserMessage, AssistantMessage, ThinkingIndicator,
     format_tool_content,
 )
 from tui.widgets.tool_card import ToolCard
@@ -107,11 +107,9 @@ async def test_add_tool_message():
         chat = app.query_one(ChatLog)
         chat.add_message("tool", "ls -la", tool_name="bash")
         await pilot.pause()
-        msgs = chat.query(ToolMessage)
-        assert len(msgs) == 1
-        rendered = msgs.first().render()
-        assert "[bash]" in rendered.plain
-        assert "ls -la" in rendered.plain
+        cards = chat.query(ToolCard)
+        assert len(cards) == 1
+        assert cards.first()._tool_name == "bash"
 
 
 @pytest.mark.asyncio
@@ -123,6 +121,32 @@ async def test_format_tool_content():
     assert format_tool_content("glob", {"pattern": "*.py"}) == "*.py"
     assert format_tool_content("grep", {"pattern": "foo", "path": "src"}) == "foo in src"
     assert format_tool_content("fetch", {"url": "http://x"}) == "http://x"
+
+
+@pytest.mark.asyncio
+async def test_thinking_elapsed_display():
+    app = ChatTestApp()
+    async with app.run_test() as pilot:
+        chat = app.query_one(ChatLog)
+        chat.show_thinking()
+        await pilot.pause()
+        indicator = chat.query_one(ThinkingIndicator)
+        indicator.set_elapsed(3.2)
+        rendered = indicator.render()
+        assert "3.2s" in rendered.plain
+
+
+@pytest.mark.asyncio
+async def test_thinking_elapsed_over_60s():
+    app = ChatTestApp()
+    async with app.run_test() as pilot:
+        chat = app.query_one(ChatLog)
+        chat.show_thinking()
+        await pilot.pause()
+        indicator = chat.query_one(ThinkingIndicator)
+        indicator.set_elapsed(83.0)
+        rendered = indicator.render()
+        assert "1m 23s" in rendered.plain
 
 
 @pytest.mark.asyncio
