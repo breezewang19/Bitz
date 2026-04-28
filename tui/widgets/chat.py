@@ -144,6 +144,39 @@ def format_tool_content(name: str, args: dict | None = None) -> str:
         return str(args) if args else ''
 
 
+class TurnTiming(Static):
+    """每轮对话耗时汇总，显示在 assistant 消息下方。"""
+
+    DEFAULT_CSS = """
+    TurnTiming {
+        color: $text-muted;
+        margin: 0 0 1 0;
+        padding: 0 1;
+        height: auto;
+    }
+    """
+
+    def __init__(self, seconds: float) -> None:
+        super().__init__()
+        self._seconds = seconds
+
+    def render(self) -> Text:
+        return Text(f"Worked for {self._format_elapsed(self._seconds)}", style=COLORS["muted"])
+
+    @staticmethod
+    def _format_elapsed(seconds: float) -> str:
+        if seconds >= 3600:
+            h = int(seconds // 3600)
+            m = int((seconds % 3600) // 60)
+            s = int(seconds % 60)
+            return f"{h}h {m}m {s}s"
+        if seconds >= 60:
+            m = int(seconds // 60)
+            s = int(seconds % 60)
+            return f"{m}m {s}s"
+        return f"{seconds:.1f}s"
+
+
 class ChatLog(VerticalScroll):
     DEFAULT_CSS = """
     ChatLog {

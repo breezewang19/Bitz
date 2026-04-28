@@ -273,6 +273,7 @@ class BitzApp(App):
                 self._stop_thinking_animation()
                 chat.hide_thinking()
                 chat.add_message("assistant", f"[Error] {e}")
+                self._mount_turn_timing(chat)
                 bar.set_busy(False)
                 return
 
@@ -281,6 +282,7 @@ class BitzApp(App):
 
             if self._cancel_event.is_set():
                 chat.add_message("assistant", "[ESC] 已中断")
+                self._mount_turn_timing(chat)
                 bar.set_busy(False)
                 return
 
@@ -367,9 +369,19 @@ class BitzApp(App):
 
         return result
 
+    def _mount_turn_timing(self, chat: ChatLog) -> None:
+        """在聊天末尾挂载本轮耗时汇总。"""
+        from tui.widgets.chat import TurnTiming
+        if self._turn_start > 0:
+            elapsed = time.monotonic() - self._turn_start
+            chat.mount(TurnTiming(elapsed))
+            chat.call_after_refresh(chat.scroll_end, animate=False)
+
     def _process_agent_result(self, result: str) -> None:
+        from tui.widgets.chat import TurnTiming
         chat = self.query_one(ChatLog)
         chat.add_message("assistant", result)
+        self._mount_turn_timing(chat)
         self._step_count += 1
         status = self.query_one(StatusBar)
         status.update_steps(self._step_count)
@@ -405,9 +417,9 @@ class BitzApp(App):
 
     def action_clear_screen(self) -> None:
         chat = self.query_one(ChatLog)
-        from tui.widgets.chat import UserMessage, AssistantMessage
+        from tui.widgets.chat import UserMessage, AssistantMessage, TurnTiming
         from tui.widgets.tool_card import ToolCard
-        chat.query((UserMessage, AssistantMessage, ToolCard)).remove()
+        chat.query((UserMessage, AssistantMessage, ToolCard, TurnTiming)).remove()
         chat._thinking_indicator = None
 
     def action_quit(self) -> None:
