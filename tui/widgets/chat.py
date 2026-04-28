@@ -1,34 +1,13 @@
 from __future__ import annotations
 
-import shutil
-import unicodedata
-
 from textual.widgets import Static
 from textual.widgets import Markdown as MarkdownWidget
 from textual.message import Message
 from textual.containers import VerticalScroll
 from rich.text import Text
-from rich.console import Console
 
 from tui.theme import COLORS
 from tui.widgets.tool_card import ToolCard
-
-
-def _display_width(s: str) -> int:
-    w = 0
-    for ch in s:
-        if unicodedata.east_asian_width(ch) in ('W', 'F'):
-            w += 2
-        else:
-            w += 1
-    return w
-
-
-def _get_width() -> int:
-    try:
-        return shutil.get_terminal_size().columns
-    except Exception:
-        return 80
 
 
 class UserMessage(Static):
@@ -137,27 +116,6 @@ class ThinkingIndicator(Static):
     def set_tool(self, tool_name: str | None) -> None:
         self._tool_name = tool_name
         self.refresh()
-
-
-class ToolMessage(Static):
-    DEFAULT_CSS = """
-    ToolMessage {
-        color: #bd93f9;
-        margin: 0 0 1 0;
-        padding: 0 1;
-    }
-    """
-
-    def __init__(self, tool_name: str, content: str = "") -> None:
-        super().__init__()
-        self._tool_name = tool_name
-        self._content = content
-
-    def render(self) -> Text:
-        return Text.assemble(
-            Text(f"[{self._tool_name}]", style=f"bold {COLORS['tool']}"),
-            Text(f" {self._content}", style=COLORS['tool']),
-        )
 
 
 def format_tool_content(name: str, args: dict | None = None) -> str:

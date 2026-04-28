@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from textual.widgets import Static, Collapsible
-from textual.message import Message
 from rich.text import Text
 
 from tui.theme import COLORS
@@ -85,6 +84,7 @@ class ToolCard(Static):
         self._output = output
         self._update_label()
         if self._output_widget is not None:
-            self._output_widget.update(output)
+            display = output if len(output) <= 500 else output[:497] + "..."
+            self._output_widget.update(display)
         if self._collapsible is not None:
             self._collapsible.collapsed = False
