@@ -30,6 +30,7 @@ class LLMAdapter:
         self.model = model
         self.api_url = f"{base_url}/v1/messages"
         self._on_retry = on_retry  # callback(err_msg, attempt, max_retries)
+        self._last_usage = None  # 最近一次 API 响应的 usage 数据
 
     def chat(self, messages: list[dict], tools: list[dict], cancel_event: threading.Event = None, max_retries: int = 5) -> LLMResponse:
         """发送请求到 LLM（Anthropic 协议），带重试"""
@@ -190,6 +191,11 @@ class LLMAdapter:
             raise error_holder[0]
 
         response = result_holder[0]
+        # 存储 usage 数据供 TUI 读取
+        try:
+            self._last_usage = response.usage
+        except Exception:
+            self._last_usage = None
         stop_reason = response.stop_reason
         if stop_reason == "end_turn":
             # 提取文本内容（跳过 thinking）
