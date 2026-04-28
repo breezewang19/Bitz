@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import MagicMock
 from agent.loop import Agent
 from agent.context import Context
-from agent.adapter import LLMResponse
+from agent.adapter import LLMResponse, StreamEvent
 
 
 def test_agent_init():
@@ -29,10 +29,10 @@ def test_agent_init():
 def test_agent_run_text_response():
     """测试 Agent 处理文本回复"""
     mock_adapter = MagicMock()
-    mock_adapter.chat.return_value = LLMResponse(
-        content="Hello, how can I help?",
-        stop_reason="end_turn"
-    )
+    mock_adapter.stream_chat.return_value = iter([
+        StreamEvent(type="text_delta", content="Hello, how can I help?"),
+        StreamEvent(type="stop", stop_reason="end_turn"),
+    ])
     mock_tools = MagicMock()
     ctx = Context(system_prompt="You are helpful.")
 
@@ -53,9 +53,9 @@ def test_agent_run_text_response():
     assert ctx.messages[1]["role"] == "assistant"
     assert ctx.messages[1]["content"] == "Hello, how can I help?"
 
-    # Check that chat was called with correct messages
-    mock_adapter.chat.assert_called_once()
-    call_args = mock_adapter.chat.call_args
+    # Check that stream_chat was called with correct messages
+    mock_adapter.stream_chat.assert_called_once()
+    call_args = mock_adapter.stream_chat.call_args
     msgs = call_args[0][0]
     assert msgs[0]["role"] == "system"
     assert msgs[0]["content"] == "You are helpful."
@@ -69,20 +69,15 @@ def test_agent_run_tool_call():
     mock_tools = MagicMock()
 
     # First call returns tool_use, second returns end_turn
-    mock_adapter.chat.side_effect = [
-        LLMResponse(
-            content=[{
-                "type": "tool_use",
-                "id": "toolu_01",
-                "name": "echo",
-                "input": {"x": "hello"}
-            }],
-            stop_reason="tool_use"
-        ),
-        LLMResponse(
-            content="Tool returned: hello",
-            stop_reason="end_turn"
-        )
+    mock_adapter.stream_chat.side_effect = [
+        iter([
+            StreamEvent(type="tool_use", tool_id="toolu_01", tool_name="echo", tool_input={"x": "hello"}),
+            StreamEvent(type="stop", stop_reason="tool_use"),
+        ]),
+        iter([
+            StreamEvent(type="text_delta", content="Tool returned: hello"),
+            StreamEvent(type="stop", stop_reason="end_turn"),
+        ])
     ]
 
     mock_tools.execute.return_value = "hello"
@@ -122,10 +117,10 @@ def test_agent_run_tool_call():
 def test_agent_run_max_steps_exceeded():
     """测试超过最大步数"""
     mock_adapter = MagicMock()
-    mock_adapter.chat.return_value = LLMResponse(
-        content=[{"type": "tool_use", "id": "t1", "name": "echo", "input": {}}],
-        stop_reason="tool_use"
-    )
+    mock_adapter.stream_chat.return_value = iter([
+        StreamEvent(type="tool_use", tool_id="t1", tool_name="echo", tool_input={}),
+        StreamEvent(type="stop", stop_reason="tool_use"),
+    ])
     mock_tools = MagicMock()
     mock_tools.execute.return_value = "result"
 
@@ -146,9 +141,15 @@ def test_agent_run_max_steps_exceeded():
 def test_agent_run_max_tokens_stop_reason():
     """测试 max_tokens stop_reason 会自动续写"""
     mock_adapter = MagicMock()
-    mock_adapter.chat.side_effect = [
-        LLMResponse(content="这是一段被截断的回复", stop_reason="max_tokens"),
-        LLMResponse(content="续写内容", stop_reason="end_turn"),
+    mock_adapter.stream_chat.side_effect = [
+        iter([
+            StreamEvent(type="text_delta", content="这是一段被截断的回复"),
+            StreamEvent(type="stop", stop_reason="max_tokens"),
+        ]),
+        iter([
+            StreamEvent(type="text_delta", content="续写内容"),
+            StreamEvent(type="stop", stop_reason="end_turn"),
+        ]),
     ]
     mock_tools = MagicMock()
     ctx = Context(system_prompt="You are helpful.")
@@ -164,7 +165,7 @@ def test_agent_run_max_tokens_stop_reason():
     # 应该续写完成，返回最终内容
     assert result == "续写内容"
     # 调用了两次 LLM：第一次 max_tokens，第二次 end_turn
-    assert mock_adapter.chat.call_count == 2
+    assert mock_adapter.stream_chat.call_count == 2
     # 上下文包含：user输入 + assistant部分 + user续写提示 + assistant续写
     assert ctx.messages[0]["role"] == "user"
     assert ctx.messages[1]["role"] == "assistant"
@@ -176,16 +177,19 @@ def test_agent_run_max_tokens_stop_reason():
 def test_agent_run_multiple_tool_calls():
     """测试多次工具调用"""
     mock_adapter = MagicMock()
-    mock_adapter.chat.side_effect = [
-        LLMResponse(
-            content=[{"type": "tool_use", "id": "t1", "name": "echo", "input": {"x": 1}}],
-            stop_reason="tool_use"
-        ),
-        LLMResponse(
-            content=[{"type": "tool_use", "id": "t2", "name": "echo", "input": {"x": 2}}],
-            stop_reason="tool_use"
-        ),
-        LLMResponse(content="Final result", stop_reason="end_turn")
+    mock_adapter.stream_chat.side_effect = [
+        iter([
+            StreamEvent(type="tool_use", tool_id="t1", tool_name="echo", tool_input={"x": 1}),
+            StreamEvent(type="stop", stop_reason="tool_use"),
+        ]),
+        iter([
+            StreamEvent(type="tool_use", tool_id="t2", tool_name="echo", tool_input={"x": 2}),
+            StreamEvent(type="stop", stop_reason="tool_use"),
+        ]),
+        iter([
+            StreamEvent(type="text_delta", content="Final result"),
+            StreamEvent(type="stop", stop_reason="end_turn"),
+        ])
     ]
     mock_tools = MagicMock()
     mock_tools.execute.return_value = "done"
@@ -201,7 +205,7 @@ def test_agent_run_multiple_tool_calls():
 
     result = agent.run("Do multiple things")
     assert result == "Final result"
-    assert mock_adapter.chat.call_count == 3
+    assert mock_adapter.stream_chat.call_count == 3
     assert mock_tools.execute.call_count == 2
 
 
@@ -223,13 +227,11 @@ def test_agent_confirm_pending_with_confirmed_results():
     mock_tools.list_for_llm.return_value = []
 
     # 第一步：LLM 返回两个 tool_use
-    mock_adapter.chat.return_value = LLMResponse(
-        content=[
-            {"type": "tool_use", "id": "t1", "name": "echo", "input": {"x": 1}},
-            {"type": "tool_use", "id": "t2", "name": "bash", "input": {"cmd": "rm -rf /"}},
-        ],
-        stop_reason="tool_use"
-    )
+    mock_adapter.stream_chat.return_value = iter([
+        StreamEvent(type="tool_use", tool_id="t1", tool_name="echo", tool_input={"x": 1}),
+        StreamEvent(type="tool_use", tool_id="t2", tool_name="bash", tool_input={"cmd": "rm -rf /"}),
+        StreamEvent(type="stop", stop_reason="tool_use"),
+    ])
 
     ctx = Context(system_prompt="You are helpful.")
     agent = Agent(
@@ -257,3 +259,59 @@ def test_agent_confirm_pending_with_confirmed_results():
     tool_ids = [b["tool_use_id"] for b in tool_result_msg["content"]]
     assert "t1" in tool_ids
     assert "t2" in tool_ids
+
+
+def test_agent_run_stream_text_response():
+    """测试 Agent 流式处理文本回复"""
+    mock_adapter = MagicMock()
+    mock_adapter.stream_chat.return_value = iter([
+        StreamEvent(type="text_delta", content="Hello"),
+        StreamEvent(type="text_delta", content=" there"),
+        StreamEvent(type="stop", stop_reason="end_turn"),
+    ])
+    mock_tools = MagicMock()
+    ctx = Context(system_prompt="You are helpful.")
+
+    text_deltas = []
+    def on_delta(text):
+        text_deltas.append(text)
+
+    agent = Agent(
+        llm_adapter=mock_adapter,
+        tools=mock_tools,
+        context=ctx,
+        max_steps=5
+    )
+
+    result = agent.run("Hi", on_text_delta=on_delta)
+    assert result == "Hello there"
+    assert text_deltas == ["Hello", " there"]
+
+
+def test_agent_run_stream_tool_call():
+    """测试 Agent 流式处理工具调用"""
+    mock_adapter = MagicMock()
+    mock_adapter.stream_chat.side_effect = [
+        iter([
+            StreamEvent(type="tool_use", tool_id="t1", tool_name="echo", tool_input={"x": "hi"}),
+            StreamEvent(type="stop", stop_reason="tool_use"),
+        ]),
+        # 第二轮
+        iter([
+            StreamEvent(type="text_delta", content="Done"),
+            StreamEvent(type="stop", stop_reason="end_turn"),
+        ]),
+    ]
+    mock_tools = MagicMock()
+    mock_tools.execute.return_value = "echo result"
+    ctx = Context(system_prompt="You are helpful.")
+
+    agent = Agent(
+        llm_adapter=mock_adapter,
+        tools=mock_tools,
+        context=ctx,
+        max_steps=5
+    )
+
+    result = agent.run("Echo hi")
+    assert result == "Done"
