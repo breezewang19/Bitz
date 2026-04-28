@@ -25,11 +25,15 @@ class LLMAdapter:
     """LLM 适配器（Anthropic 协议）"""
 
     def __init__(self, api_key: str, base_url: str = "https://api.anthropic.com", model: str = "claude-3-5-sonnet-20241022",
-                 on_retry=None):
+                 protocol: str = "anthropic", on_retry=None):
         self.api_key = api_key
         self.base_url = base_url
         self.model = model
-        self.api_url = f"{base_url}/v1/messages"
+        self.protocol = protocol
+        if protocol == "openai":
+            self.api_url = f"{base_url}/chat/completions"
+        else:
+            self.api_url = f"{base_url}/v1/messages"
         self._on_retry = on_retry  # callback(err_msg, attempt, max_retries)
         self._last_usage = None  # 最近一次 API 响应的 usage 数据
 
@@ -53,6 +57,10 @@ class LLMAdapter:
                     if cls and isinstance(e, cls):
                         retryable = True
                 if isinstance(e, (ConnectionError, TimeoutError, OSError)):
+                    retryable = True
+                # httpx HTTPStatusError 429/5xx 重试
+                import httpx
+                if isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (429, 500, 502, 503, 504):
                     retryable = True
                 if retryable and attempt < max_retries - 1:
                     # 通知 UI 正在重试
@@ -104,6 +112,8 @@ class LLMAdapter:
 
     def _chat_once(self, messages: list[dict], tools: list[dict], cancel_event: threading.Event = None, timeout: float = 120.0) -> LLMResponse:
         """单次请求 LLM，支持 cancel_event 打断和整体超时"""
+        if self.protocol == "openai":
+            return self._chat_once_openai(messages, tools, cancel_event, timeout)
         import anthropic  # 延迟导入，避免启动时加载 ~3s
         import httpx
 
@@ -227,3 +237,140 @@ class LLMAdapter:
             if block.type == "text":
                 text_content += block.text
         return LLMResponse(content=text_content, stop_reason=stop_reason)
+
+    def _chat_once_openai(self, messages, tools, cancel_event=None, timeout=120.0):
+        """OpenAI 协议单次请求"""
+        import httpx
+
+        # 分离 system prompt
+        system_prompt = ""
+        conversation_messages = []
+        for msg in messages:
+            if msg["role"] == "system":
+                system_prompt = msg["content"]
+            else:
+                conversation_messages.append(msg)
+
+        # 转换为 OpenAI 消息格式
+        openai_messages = []
+        if system_prompt:
+            openai_messages.append({"role": "system", "content": system_prompt})
+
+        for msg in conversation_messages:
+            role = msg["role"]
+            content = msg.get("content")
+
+            if role == "user":
+                if isinstance(content, list):
+                    for block in content:
+                        if block.get("type") == "tool_result":
+                            openai_messages.append({
+                                "role": "tool",
+                                "tool_call_id": block["tool_use_id"],
+                                "content": block["content"] if isinstance(block["content"], str) else str(block["content"]),
+                            })
+                        else:
+                            openai_messages.append({"role": "user", "content": block.get("text", "")})
+                else:
+                    openai_messages.append({"role": "user", "content": content or ""})
+
+            elif role == "assistant":
+                if isinstance(content, list):
+                    text_parts = []
+                    tool_calls = []
+                    for block in content:
+                        if block.get("type") == "text":
+                            text_parts.append(block["text"])
+                        elif block.get("type") == "tool_use":
+                            tool_calls.append({
+                                "id": block["id"],
+                                "type": "function",
+                                "function": {"name": block["name"], "arguments": json.dumps(block["input"])},
+                            })
+                    assistant_msg = {"role": "assistant", "content": "".join(text_parts) or None}
+                    if tool_calls:
+                        assistant_msg["tool_calls"] = tool_calls
+                    openai_messages.append(assistant_msg)
+                else:
+                    openai_messages.append({"role": "assistant", "content": content or ""})
+
+        # 构建请求体
+        request_body = {
+            "model": self.model,
+            "messages": openai_messages,
+            "max_tokens": 16384,
+        }
+        if tools:
+            request_body["tools"] = [
+                {"type": "function", "function": {"name": t["name"], "description": t.get("description", ""), "parameters": t.get("input_schema", {})}}
+                for t in tools
+            ]
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        # 在后台线程执行 HTTP 请求
+        result_holder = [None]
+        error_holder = [None]
+        start_time = time.monotonic()
+
+        def api_call():
+            try:
+                resp = httpx.post(
+                    self.api_url,
+                    json=request_body,
+                    headers=headers,
+                    timeout=httpx.Timeout(timeout, connect=10.0),
+                )
+                resp.raise_for_status()
+                result_holder[0] = resp.json()
+            except Exception as e:
+                error_holder[0] = e
+
+        api_thread = threading.Thread(target=api_call, daemon=True)
+        api_thread.start()
+
+        while api_thread.is_alive():
+            if cancel_event and cancel_event.is_set():
+                api_thread.join(timeout=2)
+                raise LLMError("已中断")
+            if time.monotonic() - start_time > timeout + 10:
+                raise LLMError(f"API 请求超时 ({timeout}s)")
+            api_thread.join(timeout=0.1)
+
+        if error_holder[0] is not None:
+            raise error_holder[0]
+
+        resp_json = result_holder[0]
+        choice = resp_json["choices"][0]
+        message = choice["message"]
+        finish_reason = choice["finish_reason"]
+
+        # 存储 usage
+        try:
+            usage = resp_json.get("usage")
+            if usage:
+                self._last_usage = type("Usage", (), {
+                    "input_tokens": usage.get("prompt_tokens", 0),
+                    "output_tokens": usage.get("completion_tokens", 0),
+                })()
+            else:
+                self._last_usage = None
+        except Exception:
+            self._last_usage = None
+
+        if finish_reason == "tool_calls" and message.get("tool_calls"):
+            blocks = []
+            for tc in message["tool_calls"]:
+                blocks.append({
+                    "type": "tool_use",
+                    "id": tc["id"],
+                    "name": tc["function"]["name"],
+                    "input": json.loads(tc["function"]["arguments"]),
+                })
+            return LLMResponse(content=blocks, stop_reason="tool_use")
+
+        text = message.get("content", "") or ""
+        return LLMResponse(content=text, stop_reason="end_turn")

@@ -118,3 +118,66 @@ class TestLLMAdapterCancel:
                 tools=[],
                 cancel_event=cancel
             )
+
+
+class TestLLMAdapterOpenAI:
+    @patch("httpx.post")
+    def test_openai_chat_returns_response(self, mock_post):
+        """OpenAI 协议 chat() 应返回 LLMResponse"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "choices": [{
+                "message": {"role": "assistant", "content": "Hello from OpenAI!"},
+                "finish_reason": "stop",
+            }]
+        }
+        mock_post.return_value = mock_response
+
+        adapter = LLMAdapter(
+            api_key="sk-test", model="gpt-4o",
+            base_url="https://api.openai.com/v1",
+            protocol="openai",
+        )
+        response = adapter.chat(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[],
+        )
+        assert isinstance(response, LLMResponse)
+        assert response.content == "Hello from OpenAI!"
+        assert response.stop_reason == "end_turn"
+
+    @patch("httpx.post")
+    def test_openai_chat_handles_tool_use(self, mock_post):
+        """OpenAI 协议应处理 tool_calls 响应"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "bash", "arguments": '{"cmd": "ls"}'},
+                    }],
+                },
+                "finish_reason": "tool_calls",
+            }]
+        }
+        mock_post.return_value = mock_response
+
+        adapter = LLMAdapter(
+            api_key="sk-test", model="gpt-4o",
+            base_url="https://api.openai.com/v1",
+            protocol="openai",
+        )
+        response = adapter.chat(
+            messages=[{"role": "user", "content": "list files"}],
+            tools=[{"name": "bash", "description": "run bash", "input_schema": {}}],
+        )
+        assert response.stop_reason == "tool_use"
+        assert len(response.content) == 1
+        assert response.content[0]["name"] == "bash"
+        assert response.content[0]["id"] == "call_1"
