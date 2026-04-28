@@ -11,6 +11,7 @@ from rich.text import Text
 from rich.console import Console
 
 from tui.theme import COLORS
+from tui.widgets.tool_card import ToolCard
 
 
 def _display_width(s: str) -> int:
@@ -203,7 +204,7 @@ class ChatLog(VerticalScroll):
         elif role == "assistant":
             msg_widget = AssistantMessage(content)
         elif role == "tool":
-            msg_widget = ToolMessage(tool_name, content)
+            msg_widget = ToolCard(tool_name=tool_name, args_summary=content)
         else:
             msg_widget = Static(content)
 

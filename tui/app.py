@@ -61,7 +61,7 @@ class BitzApp(App):
         self._install_retry_logger()
 
     def _install_tool_logger(self) -> None:
-        """Monkey-patch tools.execute to log tool calls to UI, matching original tui_core.py."""
+        """Monkey-patch tools.execute to log tool calls to UI via ToolCard."""
         original = self._original_execute
         app = self
 
@@ -71,6 +71,9 @@ class BitzApp(App):
             app._set_tool_running(name)
             try:
                 result = original(name, args, confirmed=confirmed, tool_id=tool_id)
+                # 更新 ToolCard 状态
+                is_error = result.startswith("Error") or result.startswith("[CONFIRM_REQUIRED]")
+                app._post_tool_result(name, result, is_error)
             finally:
                 app._set_tool_running(None)
             return result
@@ -101,6 +104,25 @@ class BitzApp(App):
     def _update_tool_running(self, tool_name: str | None) -> None:
         chat = self.query_one(ChatLog)
         chat.set_tool_running(tool_name)
+
+    def _post_tool_result(self, tool_name: str, result: str, is_error: bool) -> None:
+        """Thread-safe: update the last ToolCard with success/error result."""
+        try:
+            self.call_from_thread(self._update_tool_result, tool_name, result, is_error)
+        except Exception:
+            pass
+
+    def _update_tool_result(self, tool_name: str, result: str, is_error: bool) -> None:
+        from tui.widgets.tool_card import ToolCard
+        chat = self.query_one(ChatLog)
+        cards = chat.query(ToolCard)
+        for card in reversed(list(cards)):
+            if card._tool_name == tool_name and card._status == "running":
+                if is_error:
+                    card.set_error(result)
+                else:
+                    card.set_success(result)
+                return
 
     def _post_tool_call(self, tool_name: str, content: str) -> None:
         """Thread-safe: schedule a tool message on the UI from any thread."""

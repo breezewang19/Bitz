@@ -4,6 +4,7 @@ from tui.widgets.chat import (
     ChatLog, UserMessage, AssistantMessage, ThinkingIndicator, ToolMessage,
     format_tool_content,
 )
+from tui.widgets.tool_card import ToolCard
 
 
 class ChatTestApp(App):
