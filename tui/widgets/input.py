@@ -31,9 +31,6 @@ class InputBar(Widget):
     class CancelRequested(Message):
         pass
 
-    class ThemeChangeRequested(Message):
-        pass
-
     class CommandSubmitted(Message):
         """斜杠命令消息，当输入以 / 开头时触发。"""
 
@@ -68,11 +65,7 @@ class InputBar(Widget):
                     parts = text[1:].split(None, 1)
                     command = parts[0] if parts else ""
                     args = parts[1] if len(parts) > 1 else ""
-                    # /theme 仍发送 ThemeChangeRequested 以保持向后兼容
-                    if command == "theme" and not args:
-                        self.post_message(self.ThemeChangeRequested())
-                    else:
-                        self.post_message(self.CommandSubmitted(command, args))
+                    self.post_message(self.CommandSubmitted(command, args))
                 else:
                     self.post_message(self.MessageSubmitted(text))
             event.prevent_default()

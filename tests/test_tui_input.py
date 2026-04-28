@@ -98,7 +98,8 @@ async def test_inputbar_esc_fires_cancel():
 
 @pytest.mark.asyncio
 async def test_inputbar_theme_command():
-    theme_requested = []
+    """测试 /theme 发送 CommandSubmitted 消息（command='theme'）。"""
+    commands = []
 
     class ThemeApp(App):
         CSS = ""
@@ -106,8 +107,8 @@ async def test_inputbar_theme_command():
         def compose(self) -> ComposeResult:
             yield InputBar()
 
-        def on_input_bar_theme_change_requested(self, event: InputBar.ThemeChangeRequested) -> None:
-            theme_requested.append(True)
+        def on_input_bar_command_submitted(self, event: InputBar.CommandSubmitted) -> None:
+            commands.append((event.command, event.args))
             self.exit()
 
     app = ThemeApp()
@@ -117,7 +118,7 @@ async def test_inputbar_theme_command():
         await pilot.press("enter")
         await pilot.pause()
 
-    assert len(theme_requested) == 1
+    assert commands == [("theme", "")]
 
 
 @pytest.mark.asyncio

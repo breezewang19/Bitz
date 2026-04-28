@@ -160,18 +160,51 @@ class BitzApp(App):
         chat.add_message("user", event.text)
         self._run_agent(event.text)
 
-    def on_input_bar_theme_change_requested(self, event: InputBar.ThemeChangeRequested) -> None:
-        """循环切换主题。"""
-        from tui.theme import THEME_NAMES
-        current = self.theme
-        try:
-            idx = THEME_NAMES.index(current)
-            next_idx = (idx + 1) % len(THEME_NAMES)
-        except ValueError:
-            next_idx = 0
-        self.theme = THEME_NAMES[next_idx]
+    def on_input_bar_command_submitted(self, event: InputBar.CommandSubmitted) -> None:
+        """处理斜杠命令。"""
+        command = event.command
+        args = event.args
         chat = self.query_one(ChatLog)
-        chat.add_message("tool", f"Theme: {THEME_NAMES[next_idx]}", tool_name="theme")
+
+        if command == "help":
+            help_text = (
+                "## 可用命令\n\n"
+                "| 命令 | 说明 |\n"
+                "|------|------|\n"
+                "| `/help` | 显示此帮助信息 |\n"
+                "| `/clear` | 清屏 |\n"
+                "| `/compact` | 压缩上下文 |\n"
+                "| `/theme [name]` | 切换主题（无参数时循环切换）|\n"
+            )
+            chat.add_message("assistant", help_text)
+        elif command == "clear":
+            self.action_clear_screen()
+        elif command == "compact":
+            before = len(self._agent.context.messages)
+            self._agent.context._trim()
+            after = len(self._agent.context.messages)
+            removed = before - after
+            chat.add_message("assistant", f"上下文已压缩：{before} → {after} 条消息（移除 {removed} 条）")
+        elif command == "theme":
+            if args:
+                from tui.theme import THEME_NAMES
+                if args in THEME_NAMES:
+                    self.theme = args
+                    chat.add_message("assistant", f"主题已切换为 {args}")
+                else:
+                    chat.add_message("assistant", f"未知主题: {args}。可用: {', '.join(THEME_NAMES)}")
+            else:
+                from tui.theme import THEME_NAMES
+                current = self.theme
+                try:
+                    idx = THEME_NAMES.index(current)
+                    next_idx = (idx + 1) % len(THEME_NAMES)
+                except ValueError:
+                    next_idx = 0
+                self.theme = THEME_NAMES[next_idx]
+                chat.add_message("assistant", f"主题已切换为 {THEME_NAMES[next_idx]}")
+        else:
+            chat.add_message("assistant", f"未知命令: /{command}。输入 /help 查看可用命令。")
 
     def on_key(self, event: Key) -> None:
         # Handle y/n keys directly during confirm mode
@@ -419,7 +452,8 @@ class BitzApp(App):
         chat = self.query_one(ChatLog)
         from tui.widgets.chat import UserMessage, AssistantMessage, TurnTiming
         from tui.widgets.tool_card import ToolCard
-        chat.query((UserMessage, AssistantMessage, ToolCard, TurnTiming)).remove()
+        for widget_type in (UserMessage, AssistantMessage, ToolCard, TurnTiming):
+            chat.query(widget_type).remove()
         chat._thinking_indicator = None
 
     def action_quit(self) -> None:
