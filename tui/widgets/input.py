@@ -31,6 +31,9 @@ class InputBar(Widget):
     class CancelRequested(Message):
         pass
 
+    class ThemeChangeRequested(Message):
+        pass
+
     def __init__(self) -> None:
         super().__init__()
         self._history: list[str] = []
@@ -52,7 +55,10 @@ class InputBar(Widget):
                 self._history.append(text)
                 self._history_index = len(self._history)
                 self._input.value = ""
-                self.post_message(self.MessageSubmitted(text))
+                if text == "/theme":
+                    self.post_message(self.ThemeChangeRequested())
+                else:
+                    self.post_message(self.MessageSubmitted(text))
             event.prevent_default()
         elif event.key == "up":
             if self._input.value == "" or self._history_index > 0:

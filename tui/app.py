@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
+import time
 from typing import TYPE_CHECKING
 
 from textual.app import App, ComposeResult
@@ -38,6 +39,9 @@ class BitzApp(App):
         self._exiting = False
         self._confirm_prompt: ConfirmPrompt | None = None
         self._confirm_result: asyncio.Future | None = None
+        self._turn_start: float = 0.0
+        self._total_input_tokens: int = 0
+        self._total_output_tokens: int = 0
 
     def compose(self) -> ComposeResult:
         yield ChatLog()
@@ -156,6 +160,19 @@ class BitzApp(App):
         chat.add_message("user", event.text)
         self._run_agent(event.text)
 
+    def on_input_bar_theme_change_requested(self, event: InputBar.ThemeChangeRequested) -> None:
+        """循环切换主题。"""
+        from tui.theme import THEME_NAMES
+        current = self.theme
+        try:
+            idx = THEME_NAMES.index(current)
+            next_idx = (idx + 1) % len(THEME_NAMES)
+        except ValueError:
+            next_idx = 0
+        self.theme = THEME_NAMES[next_idx]
+        chat = self.query_one(ChatLog)
+        chat.add_message("tool", f"Theme: {THEME_NAMES[next_idx]}", tool_name="theme")
+
     def on_key(self, event: Key) -> None:
         # Handle y/n keys directly during confirm mode
         if self._confirm_prompt is not None and self._confirm_result is not None:
@@ -222,6 +239,7 @@ class BitzApp(App):
     def _run_agent(self, user_input: str) -> None:
         self._cancel_event.clear()
         self._confirmed_tools.clear()
+        self._turn_start = time.monotonic()
         chat = self.query_one(ChatLog)
         bar = self.query_one(InputBar)
         self._stop_thinking_animation()
@@ -355,6 +373,15 @@ class BitzApp(App):
         self._step_count += 1
         status = self.query_one(StatusBar)
         status.update_steps(self._step_count)
+        # 累积 token 使用量
+        usage = getattr(self._agent.llm_adapter, '_last_usage', None)
+        if usage:
+            try:
+                self._total_input_tokens += getattr(usage, 'input_tokens', 0) or 0
+                self._total_output_tokens += getattr(usage, 'output_tokens', 0) or 0
+            except Exception:
+                pass
+            status.update_tokens(self._total_input_tokens, self._total_output_tokens)
 
     def _start_thinking_animation(self) -> None:
         self._thinking_task = asyncio.create_task(self._thinking_animation_loop())
@@ -369,14 +396,18 @@ class BitzApp(App):
         try:
             while True:
                 chat.update_thinking()
+                if self._turn_start > 0 and chat._thinking_indicator is not None:
+                    elapsed = time.monotonic() - self._turn_start
+                    chat._thinking_indicator.set_elapsed(elapsed)
                 await asyncio.sleep(0.08)
         except asyncio.CancelledError:
             pass
 
     def action_clear_screen(self) -> None:
         chat = self.query_one(ChatLog)
-        from tui.widgets.chat import UserMessage, AssistantMessage, ToolMessage
-        chat.query((UserMessage, AssistantMessage, ToolMessage)).remove()
+        from tui.widgets.chat import UserMessage, AssistantMessage
+        from tui.widgets.tool_card import ToolCard
+        chat.query((UserMessage, AssistantMessage, ToolCard)).remove()
         chat._thinking_indicator = None
 
     def action_quit(self) -> None:

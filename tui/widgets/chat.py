@@ -95,24 +95,36 @@ class ThinkingIndicator(Static):
         self._frame = 0
         self._canceling = False
         self._tool_name: str | None = None
+        self._elapsed: float | None = None
 
     def render(self) -> Text:
         frame = self.SPINNER_FRAMES[self._frame % len(self.SPINNER_FRAMES)]
+        parts = []
         if self._canceling:
-            return Text.assemble(
-                Text(f"{frame} ", style=COLORS["error"]),
-                Text("[ESC] Canceling", style=COLORS["error"]),
-            )
-        if self._tool_name:
-            return Text.assemble(
-                Text(f"{frame} ", style=COLORS["tool"]),
-                Text(f"Running ", style=COLORS["tool"]),
-                Text(f"[{self._tool_name}]", style=f"bold {COLORS['tool']}"),
-            )
-        return Text.assemble(
-            Text(f"{frame} ", style=COLORS["thinking"]),
-            Text("Thinking", style=COLORS["thinking"]),
-        )
+            parts.append(Text(f"{frame} ", style=COLORS["error"]))
+            parts.append(Text("[ESC] Canceling", style=COLORS["error"]))
+        elif self._tool_name:
+            parts.append(Text(f"{frame} ", style=COLORS["tool"]))
+            parts.append(Text(f"Running ", style=COLORS["tool"]))
+            parts.append(Text(f"[{self._tool_name}]", style=f"bold {COLORS['tool']}"))
+        else:
+            parts.append(Text(f"{frame} ", style=COLORS["thinking"]))
+            parts.append(Text("Thinking", style=COLORS["thinking"]))
+        if self._elapsed is not None:
+            parts.append(Text(f" {self._format_elapsed(self._elapsed)}", style=COLORS["muted"]))
+        return Text.assemble(*parts)
+
+    @staticmethod
+    def _format_elapsed(seconds: float) -> str:
+        if seconds >= 60:
+            m = int(seconds // 60)
+            s = int(seconds % 60)
+            return f"{m}m {s}s"
+        return f"{seconds:.1f}s"
+
+    def set_elapsed(self, seconds: float) -> None:
+        self._elapsed = seconds
+        self.refresh()
 
     def advance(self) -> None:
         self._frame += 1
