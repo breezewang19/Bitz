@@ -57,6 +57,15 @@ class AssistantMessage(Static):
         except Exception:
             pass
 
+    def append_content(self, text: str) -> None:
+        """追加流式文本增量。"""
+        self._content += text
+        try:
+            md = self.query_one(MarkdownWidget)
+            md.update(self._content)
+        except Exception:
+            pass
+
 
 class ThinkingIndicator(Static):
     DEFAULT_CSS = """
@@ -195,6 +204,7 @@ class ChatLog(VerticalScroll):
     def __init__(self) -> None:
         super().__init__()
         self._thinking_indicator: ThinkingIndicator | None = None
+        self._streaming_message: AssistantMessage | None = None
 
     def add_message(self, role: str, content: str, tool_name: str = "") -> None:
         # Only hide thinking when assistant speaks — tool calls happen mid-thinking
@@ -238,6 +248,21 @@ class ChatLog(VerticalScroll):
         if self._thinking_indicator is not None:
             self._thinking_indicator.remove()
             self._thinking_indicator = None
+
+    def start_streaming_message(self) -> None:
+        """创建空的流式 AssistantMessage。"""
+        if self._thinking_indicator is not None:
+            self._thinking_indicator.remove()
+            self._thinking_indicator = None
+        self._streaming_message = AssistantMessage("")
+        self.mount(self._streaming_message)
+        self.call_after_refresh(self._scroll_to_bottom)
+
+    def finish_streaming_message(self) -> None:
+        """完成流式消息，将 Markdown 重新渲染。"""
+        if self._streaming_message is not None:
+            self._streaming_message.update_content(self._streaming_message._content)
+            self._streaming_message = None
 
     def _scroll_to_bottom(self) -> None:
         self.scroll_end(animate=False)

@@ -66,6 +66,8 @@ class BitzApp(App):
 
     def _install_tool_logger(self) -> None:
         """Monkey-patch tools.execute to log tool calls to UI via ToolCard."""
+        import difflib
+
         original = self._original_execute
         app = self
 
@@ -74,10 +76,44 @@ class BitzApp(App):
             app._post_tool_call(name, content)
             app._set_tool_running(name)
             try:
+                # 对于 edit_file 和 write_file，在执行前读取原文件内容以生成 diff
+                old_content = None
+                if name == "edit_file" and isinstance(args, dict):
+                    try:
+                        with open(args.get("path", ""), "r", encoding="utf-8") as f:
+                            old_content = f.read()
+                    except Exception:
+                        pass
+                elif name == "write_file" and isinstance(args, dict):
+                    path = args.get("path", "")
+                    if os.path.exists(path):
+                        try:
+                            with open(path, "r", encoding="utf-8") as f:
+                                old_content = f.read()
+                        except Exception:
+                            pass
+
                 result = original(name, args, confirmed=confirmed, tool_id=tool_id)
-                # 更新 ToolCard 状态
                 is_error = result.startswith("Error") or result.startswith("[CONFIRM_REQUIRED]")
-                app._post_tool_result(name, result, is_error)
+
+                # 生成 diff
+                diff_text = None
+                if not is_error and old_content is not None:
+                    if name == "edit_file":
+                        new_content = old_content.replace(args.get("old_string", ""), args.get("new_string", ""))
+                    else:  # write_file
+                        new_content = args.get("content", "")
+                    diff_lines = list(difflib.unified_diff(
+                        old_content.splitlines(keepends=True),
+                        new_content.splitlines(keepends=True),
+                        fromfile=f"a/{args.get('path', '')}",
+                        tofile=f"b/{args.get('path', '')}",
+                        n=3,
+                    ))
+                    if diff_lines:
+                        diff_text = "".join(diff_lines)
+
+                app._post_tool_result(name, result, is_error, diff_text)
             finally:
                 app._set_tool_running(None)
             return result
@@ -109,14 +145,27 @@ class BitzApp(App):
         chat = self.query_one(ChatLog)
         chat.set_tool_running(tool_name)
 
-    def _post_tool_result(self, tool_name: str, result: str, is_error: bool) -> None:
-        """Thread-safe: update the last ToolCard with success/error result."""
+    def _on_text_delta(self, text: str) -> None:
+        """流式文本增量回调——从 agent 线程调用，需要线程安全。"""
         try:
-            self.call_from_thread(self._update_tool_result, tool_name, result, is_error)
+            self.call_from_thread(self._update_streaming_message, text)
         except Exception:
             pass
 
-    def _update_tool_result(self, tool_name: str, result: str, is_error: bool) -> None:
+    def _update_streaming_message(self, text: str) -> None:
+        """在主线程中更新流式 AssistantMessage。"""
+        chat = self.query_one(ChatLog)
+        if chat._streaming_message is not None:
+            chat._streaming_message.append_content(text)
+
+    def _post_tool_result(self, tool_name: str, result: str, is_error: bool, diff_text: str = None) -> None:
+        """Thread-safe: update the last ToolCard with success/error result."""
+        try:
+            self.call_from_thread(self._update_tool_result, tool_name, result, is_error, diff_text)
+        except Exception:
+            pass
+
+    def _update_tool_result(self, tool_name: str, result: str, is_error: bool, diff_text: str = None) -> None:
         from tui.widgets.tool_card import ToolCard
         chat = self.query_one(ChatLog)
         cards = chat.query(ToolCard)
@@ -124,6 +173,8 @@ class BitzApp(App):
             if card._tool_name == tool_name and card._status == "running":
                 if is_error:
                     card.set_error(result)
+                elif diff_text:
+                    card.set_diff(diff_text)
                 else:
                     card.set_success(result)
                 return
@@ -291,6 +342,7 @@ class BitzApp(App):
             chat = self.query_one(ChatLog)
             self._stop_thinking_animation()
             chat.show_thinking()
+            chat.start_streaming_message()
             self._start_thinking_animation()
 
             try:
@@ -301,10 +353,12 @@ class BitzApp(App):
                     self._cancel_event,
                     self._confirmed_tools,
                     skip_add_user,
+                    self._on_text_delta,  # on_text_delta callback
                 )
             except Exception as e:
                 self._stop_thinking_animation()
                 chat.hide_thinking()
+                chat.finish_streaming_message()
                 chat.add_message("assistant", f"[Error] {e}")
                 self._mount_turn_timing(chat)
                 bar.set_busy(False)
@@ -312,6 +366,7 @@ class BitzApp(App):
 
             self._stop_thinking_animation()
             chat.hide_thinking()
+            chat.finish_streaming_message()
 
             if self._cancel_event.is_set():
                 chat.add_message("assistant", "[ESC] 已中断")
@@ -413,7 +468,10 @@ class BitzApp(App):
     def _process_agent_result(self, result: str) -> None:
         from tui.widgets.chat import TurnTiming
         chat = self.query_one(ChatLog)
-        chat.add_message("assistant", result)
+        # 流式消息已经在 chat 中了，不需要再 add_message
+        # 但如果流式消息为空（非流式路径），仍然需要添加
+        if chat._streaming_message is None:
+            chat.add_message("assistant", result)
         self._mount_turn_timing(chat)
         self._step_count += 1
         status = self.query_one(StatusBar)
@@ -455,6 +513,7 @@ class BitzApp(App):
         for widget_type in (UserMessage, AssistantMessage, ToolCard, TurnTiming):
             chat.query(widget_type).remove()
         chat._thinking_indicator = None
+        chat._streaming_message = None
 
     def action_quit(self) -> None:
         if self._exiting:
