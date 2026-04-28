@@ -257,9 +257,10 @@ def run_agent(get_input_fn: Callable[[list[str]], str]):
         print(f"{C.ERROR_FG}Error: Please set ANTHROPIC_API_KEY in .env file{C.RESET}")
         sys.exit(1)
 
+    from agent.prompt import build_system_prompt
     adapter = LLMAdapter(api_key=api_key, base_url=base_url, model=model_name)
     context = Context(
-        system_prompt="你叫 Bitz-Cat，是一只小巧玲珑的 mini agent 助手。你聪明、活泼、乐于助人，擅长编程、调试、文件操作和各种技术任务。用温暖友好的方式与用户交流，偶尔会像猫咪一样表现出好奇心和调皮。",
+        system_prompt=build_system_prompt(cwd=os.getcwd()),
         max_tokens=4096,
         keep_last_n=20
     )

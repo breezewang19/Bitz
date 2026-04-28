@@ -161,7 +161,7 @@ def create_tools() -> ToolRegistry:
 
     tools.register(
         name="bash",
-        description="Execute a bash command",
+        description="Execute a bash command. Use for running tests, installing packages, git operations, and other system commands. Avoid using bash for file reading/writing — prefer read_file/write_file/edit_file instead.",
         input_schema={
             "type": "object",
             "properties": {"command": {"type": "string"}},
@@ -175,7 +175,7 @@ def create_tools() -> ToolRegistry:
 
     tools.register(
         name="read_file",
-        description="Read file contents",
+        description="Read the full contents of a file. Use this to understand code before making changes.",
         input_schema={
             "type": "object",
             "properties": {"path": {"type": "string"}},
@@ -186,7 +186,7 @@ def create_tools() -> ToolRegistry:
 
     tools.register(
         name="write_file",
-        description="Write content to a file",
+        description="Write content to a file, creating it if it doesn't exist or overwriting if it does. Use for creating new files or complete rewrites. For small changes, prefer edit_file.",
         input_schema={
             "type": "object",
             "properties": {
@@ -201,7 +201,7 @@ def create_tools() -> ToolRegistry:
 
     tools.register(
         name="edit_file",
-        description="Replace a unique string in a file. old_string must be unique in the file.",
+        description="Replace a unique string in a file. old_string must appear exactly once in the file — if it matches multiple times, the operation fails. Use this for targeted edits instead of rewriting entire files.",
         input_schema={
             "type": "object",
             "properties": {
@@ -217,7 +217,7 @@ def create_tools() -> ToolRegistry:
 
     tools.register(
         name="glob",
-        description="Search files by pattern (supports **/*.py etc.)",
+        description="Search for files by glob pattern (e.g. **/*.py, src/**/*.ts). Returns matching file paths.",
         input_schema={
             "type": "object",
             "properties": {"pattern": {"type": "string"}},
@@ -228,7 +228,7 @@ def create_tools() -> ToolRegistry:
 
     tools.register(
         name="grep",
-        description="Search file contents by regex pattern. Optionally filter by file type with include (e.g. '*.py').",
+        description="Search file contents by regex pattern. Returns matching lines with file paths and line numbers. Use include to filter by file type (e.g. '*.py'). Prefer grep over bash grep for searching code.",
         input_schema={
             "type": "object",
             "properties": {
