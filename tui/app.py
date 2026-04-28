@@ -52,6 +52,11 @@ class BitzApp(App):
         status.update_model(model_name)
         bar = self.query_one(InputBar)
         bar.focus_input()
+        # 注册主题
+        from tui.theme import BITZ_THEMES, detect_theme
+        for theme in BITZ_THEMES:
+            self.register_theme(theme)
+        self.theme = detect_theme()
         self._install_tool_logger()
         self._install_retry_logger()
 
