@@ -102,6 +102,7 @@ class InputBar(Widget):
             if cmd:
                 self._input.text = cmd + " "
                 self._close_command_popup()
+                self._input.focus()
             event.prevent_default()
             return
 

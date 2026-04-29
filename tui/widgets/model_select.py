@@ -6,8 +6,6 @@ from textual.containers import Vertical, Horizontal
 from textual.message import Message
 from rich.text import Text
 
-from tui.theme import COLORS
-
 
 class ModelSelectScreen(ModalScreen):
     """模型选择列表弹窗。"""
@@ -67,9 +65,9 @@ class ModelSelectScreen(ModalScreen):
             for m in models:
                 marker = " ←" if m.id == current_id else ""
                 label = Text.assemble(
-                    Text(f"{m.id}", style=f"bold {COLORS['tool']}"),
-                    Text(f" ({m.protocol}/{m.model})", style=COLORS["muted"]),
-                    Text(marker, style=COLORS["user"]),
+                    Text(f"{m.id}", style="bold cyan"),
+                    Text(f" ({m.protocol}/{m.model})", style="dim"),
+                    Text(marker, style="green"),
                 )
                 option_list.add_option(label)
             yield option_list

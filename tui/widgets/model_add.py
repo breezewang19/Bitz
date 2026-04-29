@@ -35,11 +35,6 @@ class ModelAddScreen(ModalScreen):
         margin-bottom: 1;
     }
 
-    ModelAddScreen .form-row {
-        height: auto;
-        margin-bottom: 0;
-    }
-
     ModelAddScreen .form-label {
         color: $text-muted;
         margin-bottom: 0;

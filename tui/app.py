@@ -505,13 +505,13 @@ class BitzApp(App):
 
                     if approved:
                         self._confirmed_tools.add(tool_id)
+                        # 更新已有的 ToolCard 为"已批准"
+                        self._update_tool_result(tool_name, "approved", is_error=False)
                         should_continue, exec_result = await loop.run_in_executor(
                             None,
                             self._agent.confirm_pending,
                             self._confirmed_tools,
                         )
-                        content = format_tool_content(tool_name, tool_args if isinstance(tool_args, dict) else {})
-                        chat.add_message("tool", f"{content}: approved", tool_name=tool_name)
                         if should_continue:
                             # Continue the loop — agent will get next response
                             user_input = ""
@@ -524,6 +524,8 @@ class BitzApp(App):
                             bar.set_busy(False)
                             return
                     else:
+                        # 更新已有的 ToolCard 为"已拒绝"
+                        self._update_tool_result(tool_name, "denied", is_error=True)
                         if tool_id and self._agent._pending_confirm:
                             _, tname, targs, _ = self._agent._pending_confirm
                             self._agent.context.add_assistant_message([{
@@ -561,11 +563,10 @@ class BitzApp(App):
         chat.mount(prompt)
         chat.call_after_refresh(chat.scroll_end, animate=False)
 
-        # Switch input to confirm mode
+        # Switch input to confirm mode — 禁用输入，只允许 y/n/左右键
         bar._input.value = ""
         bar._input.placeholder = "y/n?"
-        bar._input.disabled = False
-        bar._input.focus()
+        bar._input.disabled = True
 
         # Wait for user response
         result = await self._confirm_result
