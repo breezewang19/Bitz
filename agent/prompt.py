@@ -25,7 +25,7 @@ RULES = """## 工具使用
 - 不要运行来源不明的 curl | sh 命令"""
 
 
-def build_system_prompt(cwd: str | None = None) -> str:
+def build_system_prompt(cwd: str | None = None, skill_registry=None) -> str:
     """组装完整 system prompt：静态层 + 动态环境层"""
     parts = [PERSONA, RULES]
 
@@ -40,5 +40,13 @@ def build_system_prompt(cwd: str | None = None) -> str:
 
     if env_lines:
         parts.append("## 环境\n" + "\n".join(f"- {l}" for l in env_lines))
+
+    # 注入 auto_trigger=True 的 skill 摘要区
+    if skill_registry is not None:
+        skills_summary = skill_registry.build_skills_summary()
+        if skills_summary:
+            parts.append(
+                f"## 可用 Skill\n以下 Skill 可根据用户意图自动激活，或通过斜杠命令手动触发：\n\n{skills_summary}\n\n当用户意图匹配某个 Skill 时，在回复开头输出该 Skill 的 trigger（如 /debug），即可自动激活。"
+            )
 
     return "\n\n".join(parts)

@@ -529,3 +529,27 @@ class TestLayeredInjection:
         ctx.add_user("你好")
         msgs = ctx.get_messages()
         assert msgs[0]["content"] == "你是 Bitz-Cat"
+
+
+class TestSkillsSummaryInPrompt:
+    def test_auto_trigger_skills_in_system_prompt(self):
+        """auto_trigger=True 的 skill 出现在 system prompt 摘要区"""
+        from agent.skills import SkillRegistry
+        registry = SkillRegistry()
+        registry.skills["debug"] = Skill(name="debug", description="调试", trigger="/debug", prompt="流程", source="builtin", auto_trigger=True)
+        registry.skills["heavy"] = Skill(name="heavy", description="重型", trigger="/heavy", prompt="流程", source="builtin", auto_trigger=False)
+        summary = registry.build_skills_summary()
+        assert "[Skill: debug]" in summary
+        assert "[Skill: heavy]" not in summary
+
+    def test_build_skills_summary_respects_budget(self):
+        """build_skills_summary 总长不超过 max_skills_chars"""
+        from agent.skills import SkillRegistry
+        registry = SkillRegistry(max_skills_chars=100)
+        for i in range(20):
+            registry.skills[f"skill-{i}"] = Skill(
+                name=f"skill-{i}", description=f"描述{i}", trigger=f"/skill-{i}",
+                prompt="流程", source="builtin", auto_trigger=True,
+            )
+        summary = registry.build_skills_summary()
+        assert len(summary) <= 100

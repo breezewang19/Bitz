@@ -41,8 +41,14 @@ def main():
             model=current.model,
             protocol=current.protocol,
         )
+
+        # 加载 Skill（移到 build_system_prompt 之前）
+        skill_registry = SkillRegistry()
+        skill_registry.load_builtin(os.path.join(os.path.dirname(__file__), "skills"))
+        skill_registry.load_user(os.path.join(".", ".bitz", "skills"))
+
         context = Context(
-            system_prompt=build_system_prompt(cwd=os.getcwd()),
+            system_prompt=build_system_prompt(cwd=os.getcwd(), skill_registry=skill_registry),
             max_tokens=4096,
             keep_last_n=20,
         )
@@ -51,13 +57,8 @@ def main():
             llm_adapter=adapter,
             tools=tools,
             context=context,
-            max_steps=20,
+            max_steps=100,
         )
-
-        # 加载 Skill
-        skill_registry = SkillRegistry()
-        skill_registry.load_builtin(os.path.join(os.path.dirname(__file__), "skills"))
-        skill_registry.load_user(os.path.join(".", ".bitz", "skills"))
 
         app = BitzApp(agent=agent, model_store=store, skill_registry=skill_registry)
         app.run()
