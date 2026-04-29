@@ -130,27 +130,21 @@ class ModelAddScreen(ModalScreen):
                 errors.append("请选择 Provider")
 
             if errors:
-                # 重新弹出带错误信息的表单
-                self.app.push_screen(ModelAddScreen(error="；".join(errors)), self.app._on_model_added)
-                self.dismiss(None)
+                # 返回错误信息，让回调处理重新显示表单
+                self.dismiss(("error", "；".join(errors)))
                 return
 
             # 从预设中获取 protocol
             protocol = PROVIDER_PRESETS.get(provider, (provider, ""))[0]
 
-            from agent.models import ModelConfig
-            try:
-                config = ModelConfig(
-                    id=id_val,
-                    protocol=protocol,
-                    base_url=base_url,
-                    api_key=api_key,
-                    model=model,
-                )
-                self.dismiss(config)
-            except ValueError as e:
-                self.app.push_screen(ModelAddScreen(error=str(e)), self.app._on_model_added)
-                self.dismiss(None)
+            # 返回表单数据，让回调处理创建 ModelConfig
+            self.dismiss(("data", {
+                "id": id_val,
+                "protocol": protocol,
+                "base_url": base_url,
+                "api_key": api_key,
+                "model": model,
+            }))
 
     def key_escape(self) -> None:
         self.dismiss(None)

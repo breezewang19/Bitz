@@ -16,6 +16,9 @@ from tui.widgets.chat import ChatLog, format_tool_content
 from tui.widgets.confirm import ConfirmPrompt
 from tui.widgets.input import InputBar
 from tui.widgets.status import StatusBar
+from tui.widgets.model_select import ModelSelectScreen
+from tui.widgets.model_add import ModelAddScreen
+from tui.widgets.model_confirm import ModelConfirmScreen
 
 if TYPE_CHECKING:
     from agent.loop import Agent
@@ -215,9 +218,10 @@ class BitzApp(App):
                 "| `/clear` | 清屏 |\n"
                 "| `/compact` | 压缩上下文 |\n"
                 "| `/theme [name]` | 切换主题（无参数时循环切换）|\n"
-                "| `/models list` | 列出已配置模型 |\n"
-                "| `/models add <id> <protocol> <base_url> <api_key> <model>` | 添加模型 |\n"
-                "| `/models <id>` | 切换模型 |\n"
+                "| `/models` | 模型管理弹窗 |\n"
+                "| `/models list` | 列出已配置模型（文本） |\n"
+                "| `/models add <id> <protocol> <base_url> <api_key> <model>` | 添加模型（文本） |\n"
+                "| `/models <id>` | 切换模型（文本） |\n"
             )
             chat.add_message("assistant", help_text)
         elif command == "clear":
@@ -259,7 +263,12 @@ class BitzApp(App):
 
         parts = args.strip().split()
 
-        if not parts or parts[0] == "list":
+        if not parts:
+            # 无参数 → 弹窗模式
+            self.push_screen(ModelSelectScreen(self._model_store), self._on_models_result)
+            return
+
+        if parts[0] == "list":
             models = self._model_store.list_all()
             current = self._model_store.get_current()
             current_id = current.id if current else None
@@ -317,6 +326,58 @@ class BitzApp(App):
         status.update_model(config.model)
         chat = self.query_one(ChatLog)
         chat.add_message("assistant", f"已切换到模型: {config.id} ({config.protocol}/{config.model})")
+
+    def _on_models_result(self, result) -> None:
+        """ModelSelectScreen 回调。"""
+        if result is None:
+            return
+        action, data = result
+        chat = self.query_one(ChatLog)
+        if action == "switch":
+            config = self._model_store.get(data)
+            if config:
+                self._switch_model(config)
+        elif action == "add":
+            self.push_screen(ModelAddScreen(), self._on_model_added)
+        elif action == "delete":
+            # 不允许删除当前模型
+            current = self._model_store.get_current()
+            if current and data == current.id:
+                chat.add_message("assistant", "无法删除当前使用的模型，请先切换")
+                return
+            # 不允许删除最后一个模型
+            if len(self._model_store.list_all()) <= 1:
+                chat.add_message("assistant", "至少需要保留一个模型")
+                return
+            self.push_screen(ModelConfirmScreen(data), self._on_model_deleted)
+
+    def _on_model_added(self, result) -> None:
+        """ModelAddScreen 回调。"""
+        if result is None:
+            return
+        action, data = result
+        if action == "error":
+            # 显示带错误信息的表单
+            self.push_screen(ModelAddScreen(error=data), self._on_model_added)
+            return
+        if action == "data":
+            from agent.models import ModelConfig
+            try:
+                config = ModelConfig(**data)
+                self._model_store.add(config)
+                chat = self.query_one(ChatLog)
+                chat.add_message("assistant", f"模型 '{config.id}' 已添加")
+            except ValueError as e:
+                self.push_screen(ModelAddScreen(error=str(e)), self._on_model_added)
+
+    def _on_model_deleted(self, result) -> None:
+        """ModelConfirmScreen 回调。"""
+        if result is None:
+            return
+        action, model_id = result
+        self._model_store.remove(model_id)
+        chat = self.query_one(ChatLog)
+        chat.add_message("assistant", f"模型 '{model_id}' 已删除")
 
     def on_key(self, event: Key) -> None:
         # Handle y/n keys directly during confirm mode

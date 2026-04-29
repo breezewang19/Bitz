@@ -49,7 +49,7 @@ class ModelConfirmScreen(ModalScreen):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "confirm-btn":
-            self.dismiss(("deleted", self._model_id))
+            self.dismiss(("delete", self._model_id))
         else:
             self.dismiss(None)
 

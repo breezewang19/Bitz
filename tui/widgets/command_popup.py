@@ -12,7 +12,7 @@ COMMANDS = [
     ("/clear", "清屏"),
     ("/compact", "压缩上下文"),
     ("/theme [name]", "切换主题"),
-    ("/models", "模型管理 (list/add/切换)"),
+    ("/models", "模型管理弹窗"),
 ]
 
 
