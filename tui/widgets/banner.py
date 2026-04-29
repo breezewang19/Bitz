@@ -3,70 +3,99 @@ from __future__ import annotations
 from textual.widgets import Static
 from textual.message import Message
 from rich.text import Text
+from rich.style import Style
 
 from tui.theme import COLORS
 
 CAT_BODY = [
     "    /\\_____/\\",
     "   /  o   o  \\",
-    "  ( =  ^  y  = )",
-    "   \\_____/    ~ Bitz ~",
+    "  ( =  ^  y = )",
+    "   \\______/  ~ Bitz ~",
 ]
 
 CAT_BLINK = [
     "    /\\_____/\\",
     "   /  -   -  \\",
-    "  ( =  ^  y  = )",
-    "   \\_____/    ~ Bitz ~",
+    "  ( =  ^  y = )",
+    "   \\______/  ~ Bitz ~",
 ]
 
-RAINBOW_COLORS = [
-    "#ff5555", "#ff5555",
-    "#f1fa8c", "#f1fa8c",
-    "#50fa7b", "#50fa7b",
-    "#8be9fd", "#8be9fd",
-    "#6272a4", "#6272a4",
-    "#bd93f9", "#bd93f9",
-    "#ff5555", "#ff5555",
-    "#f1fa8c", "#f1fa8c",
-    "#50fa7b", "#50fa7b",
-    "#8be9fd", "#8be9fd",
-    "#6272a4", "#6272a4",
-    "#bd93f9", "#bd93f9",
-    "#ff5555", "#ff5555",
+# 同色系渐变：从暗紫到亮紫，低→高亮度
+GRADIENT_COLORS = [
+    "#3b2070", "#4a2d8a", "#5a3a9e", "#6c47b2",
+    "#7e54c6", "#9061d8", "#a270e8", "#b47ef0",
+    "#c68cf8", "#d89aff", "#e8a8ff", "#f0b8ff",
+    "#c68cf8", "#a270e8", "#7e54c6", "#5a3a9e",
+    "#3b2070", "#4a2d8a", "#5a3a9e", "#6c47b2",
+    "#7e54c6", "#9061d8", "#a270e8", "#b47ef0",
+    "#c68cf8", "#d89aff", "#e8a8ff", "#f0b8ff",
+    "#c68cf8", "#a270e8", "#7e54c6", "#5a3a9e",
 ]
 
-GOODBYE_TEXT = "Goodbye~"
 GOODBYE_COLORS = [
-    "#ff5555", "#f1fa8c", "#50fa7b", "#8be9fd",
-    "#6272a4", "#bd93f9", "#ff5555", "#f1fa8c", "#50fa7b",
+    "#6c47b2", "#7e54c6", "#9061d8", "#a270e8",
+    "#b47ef0", "#c68cf8", "#d89aff", "#e8a8ff", "#f0b8ff",
 ]
 
 WELCOME_TEXT = "Welcome Back Bitz-Cat!"
+GOODBYE_TEXT = "Goodbye~"
+VERSION = "v0.1.0"
 
 BORDER_COLOR = COLORS["muted"]
+MODEL_STYLE = Style(color="#9061d8", bold=True)
+MODEL_LABEL_STYLE = Style(color="#6c47b2", dim=True)
+VERSION_STYLE = Style(color="#6c47b2", dim=True)
+VERSION_LABEL_STYLE = Style(color="#5a3a9e", dim=True)
 
 
 def _colorize_char(ch: str, idx: int, dim: bool = False) -> Text:
-    color = RAINBOW_COLORS[idx % len(RAINBOW_COLORS)]
-    style = f"dim {color}" if dim else f"bold {color}"
+    color = GRADIENT_COLORS[idx % len(GRADIENT_COLORS)]
+    style = Style(color=color, dim=dim, bold=not dim)
     return Text(ch, style=style)
 
 
 def _make_border_top(inner_w: int) -> Text:
-    return Text(f"  ╭{'─' * inner_w}╮", style=BORDER_COLOR)
+    return Text(f"╭{'─' * inner_w}╮", style=BORDER_COLOR)
 
 
 def _make_border_bottom(inner_w: int) -> Text:
-    return Text(f"  ╰{'─' * inner_w}╯", style=BORDER_COLOR)
+    return Text(f"╰{'─' * inner_w}╯", style=BORDER_COLOR)
 
 
-def _make_row(content: str, inner_w: int) -> Text:
-    pad = inner_w - len(content)
+def _make_row(content: str | Text, inner_w: int, content_len: int = 0) -> Text:
+    if isinstance(content, Text):
+        actual_len = content_len or len(content.plain)
+        pad = inner_w - actual_len
+        return Text.assemble(
+            Text("│", style=BORDER_COLOR),
+            content,
+            Text(" " * max(pad, 0)),
+            Text("│", style=BORDER_COLOR),
+        )
+    else:
+        pad = inner_w - len(content)
+        return Text.assemble(
+            Text("│", style=BORDER_COLOR),
+            Text(content),
+            Text(" " * max(pad, 0)),
+            Text("│", style=BORDER_COLOR),
+        )
+
+
+def _make_row_lr(left: str | Text, right: str | Text, inner_w: int,
+                 left_len: int = 0, right_len: int = 0) -> Text:
+    """左右对齐的一行：left 靠左，right 靠右，右侧留 2 格边距。"""
+    l_len = left_len or (len(left.plain) if isinstance(left, Text) else len(left))
+    r_len = right_len or (len(right.plain) if isinstance(right, Text) else len(right))
+    right_pad = 2
+    gap = inner_w - l_len - r_len - right_pad
     return Text.assemble(
-        Text("  │", style=BORDER_COLOR),
-        Text(content),
-        Text(" " * max(pad, 0)),
+        Text("│", style=BORDER_COLOR),
+        left,
+        Text(" " * max(gap, 1)),
+        right,
+        Text(" " * right_pad),
         Text("│", style=BORDER_COLOR),
     )
 
@@ -76,6 +105,7 @@ class BannerWidget(Static):
     BannerWidget {
         height: auto;
         margin: 1 0 0 0;
+        width: 100%;
     }
     """
 
@@ -91,9 +121,15 @@ class BannerWidget(Static):
         self._welcome_idx = 0
         self._blink_state = False
         self._blink_count = 0
-        max_cat = max(len(line) for line in CAT_BODY)
-        welcome_len = len(WELCOME_TEXT)
-        self._inner_w = max(max_cat, welcome_len) + 2
+
+    def _get_inner_w(self) -> int:
+        """获取实际可用内容宽度（减去左右边框各 1 列）。"""
+        try:
+            return self.content_region.width - 2
+        except Exception:
+            max_cat = max(len(line) for line in CAT_BODY)
+            welcome_len = len(WELCOME_TEXT)
+            return max(max_cat, welcome_len) + 4
 
     def on_mount(self) -> None:
         self._render_frame()
@@ -122,7 +158,7 @@ class BannerWidget(Static):
     def _render_frame(self) -> None:
         cat_lines = CAT_BLINK if self._blink_state else CAT_BODY
         dim = self._phase == "cat"
-        w = self._inner_w
+        w = self._get_inner_w()
 
         lines = []
         lines.append(Text(""))
@@ -131,21 +167,37 @@ class BannerWidget(Static):
         # Top padding
         lines.append(_make_row("", w))
 
-        # Welcome line
+        # Welcome line (left) + Model label (right)
         if self._phase in ("welcome", "blink", "done"):
             shown = WELCOME_TEXT[:self._welcome_idx]
             cursor = "▌" if self._phase == "welcome" else ""
-            lines.append(_make_row(f" {shown}{cursor}", w))
+            welcome_str = f" {shown}{cursor}"
+            welcome_text = Text(welcome_str, style=Style(color="#d89aff", bold=True))
+            model_label = Text("Model", style=MODEL_LABEL_STYLE)
+            lines.append(_make_row_lr(welcome_text, model_label, w,
+                                      left_len=len(welcome_str),
+                                      right_len=len("Model")))
         else:
             lines.append(_make_row("", w))
 
-        # Spacer between welcome and cat
-        lines.append(_make_row("", w))
+        # Model value (right-aligned)
+        model_val = Text(self._model_name, style=MODEL_STYLE)
+        lines.append(_make_row_lr(Text(""), model_val, w,
+                                  left_len=0, right_len=len(self._model_name)))
+
+        # Version label (right-aligned)
+        version_label = Text("Version", style=VERSION_LABEL_STYLE)
+        lines.append(_make_row_lr(Text(""), version_label, w,
+                                  left_len=0, right_len=len("Version")))
+
+        # Version value (right-aligned)
+        version_val = Text(VERSION, style=VERSION_STYLE)
+        lines.append(_make_row_lr(Text(""), version_val, w,
+                                  left_len=0, right_len=len(VERSION)))
 
         # Cat lines
         for cat_line in cat_lines:
             row = Text()
-            row.append(Text("  │", style=BORDER_COLOR))
             for i, ch in enumerate(cat_line):
                 if dim and i >= self._lit:
                     row.append(_colorize_char(ch, i, dim=True))
@@ -153,8 +205,7 @@ class BannerWidget(Static):
                     row.append(_colorize_char(ch, i, dim=False))
             pad = w - len(cat_line)
             row.append(Text(" " * max(pad, 0)))
-            row.append(Text("│", style=BORDER_COLOR))
-            lines.append(row)
+            lines.append(_make_row(row, w, content_len=len(cat_line) + max(pad, 0)))
 
         # Bottom padding
         lines.append(_make_row("", w))
@@ -166,24 +217,42 @@ class BannerWidget(Static):
         self.update(Text("\n").join(lines))
 
     def _finish(self) -> None:
-        w = self._inner_w
+        w = self._get_inner_w()
 
         lines = []
         lines.append(Text(""))
         lines.append(_make_border_top(w))
         lines.append(_make_row("", w))
-        lines.append(_make_row(f" {WELCOME_TEXT}", w))
-        lines.append(_make_row("", w))
+
+        # Welcome (left) + Model label (right)
+        welcome_text = Text(f" {WELCOME_TEXT}", style=Style(color="#d89aff", bold=True))
+        model_label = Text("Model", style=MODEL_LABEL_STYLE)
+        lines.append(_make_row_lr(welcome_text, model_label, w,
+                                  left_len=len(f" {WELCOME_TEXT}"),
+                                  right_len=len("Model")))
+
+        # Model value (right-aligned)
+        model_val = Text(self._model_name, style=MODEL_STYLE)
+        lines.append(_make_row_lr(Text(""), model_val, w,
+                                  left_len=0, right_len=len(self._model_name)))
+
+        # Version label (right-aligned)
+        version_label = Text("Version", style=VERSION_LABEL_STYLE)
+        lines.append(_make_row_lr(Text(""), version_label, w,
+                                  left_len=0, right_len=len("Version")))
+
+        # Version value (right-aligned)
+        version_val = Text(VERSION, style=VERSION_STYLE)
+        lines.append(_make_row_lr(Text(""), version_val, w,
+                                  left_len=0, right_len=len(VERSION)))
 
         for cat_line in CAT_BODY:
             row = Text()
-            row.append(Text("  │", style=BORDER_COLOR))
             for i, ch in enumerate(cat_line):
                 row.append(_colorize_char(ch, i, dim=False))
             pad = w - len(cat_line)
             row.append(Text(" " * max(pad, 0)))
-            row.append(Text("│", style=BORDER_COLOR))
-            lines.append(row)
+            lines.append(_make_row(row, w, content_len=len(cat_line) + max(pad, 0)))
 
         lines.append(_make_row("", w))
         lines.append(_make_border_bottom(w))
@@ -199,6 +268,7 @@ class GoodbyeWidget(Static):
     GoodbyeWidget {
         height: auto;
         margin: 1 0 0 0;
+        width: 100%;
     }
     """
 
@@ -225,7 +295,7 @@ class GoodbyeWidget(Static):
         for i, ch in enumerate(GOODBYE_TEXT):
             color = GOODBYE_COLORS[i]
             if i < self._lit:
-                row.append(Text(ch, style=f"bold {color}"))
+                row.append(Text(ch, style=Style(color=color, bold=True)))
             else:
-                row.append(Text(ch, style=f"dim {color}"))
+                row.append(Text(ch, style=Style(color=color, dim=True)))
         self.update(row)

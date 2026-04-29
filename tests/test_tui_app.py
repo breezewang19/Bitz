@@ -4,6 +4,7 @@ from tui.app import BitzApp
 from tui.widgets.chat import ChatLog, UserMessage, AssistantMessage
 from tui.widgets.input import InputBar
 from tui.widgets.status import StatusBar
+from agent.context import Context
 
 
 def make_mock_agent():
@@ -14,9 +15,12 @@ def make_mock_agent():
     agent.tools.list_for_llm = MagicMock(return_value=[])
     agent.llm_adapter = MagicMock()
     agent.llm_adapter._last_usage = None
-    agent.context = MagicMock()
-    agent.context.messages = list(range(20))  # 20 条消息
-    agent.context._trim = MagicMock()
+    agent.llm_adapter.model = "test-model"
+    # 使用真实的 Context 对象以支持 active_skill
+    agent.context = Context(system_prompt="test", max_tokens=4096, keep_last_n=20)
+    # 添加一些初始消息（必须是正确的格式）
+    for i in range(20):
+        agent.context.messages.append({"role": "user", "content": f"message {i}"})
     return agent
 
 
@@ -58,17 +62,19 @@ async def test_command_clear():
 async def test_command_compact():
     """测试 /compact 命令压缩上下文"""
     agent = make_mock_agent()
-    agent.context.messages = list(range(20))
-    trimmed_messages = list(range(10))
-    agent.context._trim = MagicMock()
-    agent.context._trim.side_effect = lambda: setattr(agent.context, 'messages', trimmed_messages)
+    # 添加足够的消息以触发 trim
+    for i in range(30):
+        agent.context.messages.append({"role": "user", "content": f"extra message {i}"})
+    initial_count = len(agent.context.messages)
     app = BitzApp(agent=agent)
     async with app.run_test() as pilot:
         bar = app.query_one(InputBar)
         bar._input.text = "/compact"
         await pilot.press("enter")
         await pilot.pause(delay=0.3)
-        agent.context._trim.assert_called_once()
+        # Context._trim 应被调用
+        final_count = len(agent.context.messages)
+        assert final_count < initial_count
         msgs = app.query_one(ChatLog).query(AssistantMessage)
         assert len(msgs) >= 1
         last_msg = msgs.last()
@@ -294,3 +300,79 @@ async def test_models_delete_current_blocked():
         msgs = app.query_one(ChatLog).query(AssistantMessage)
         last_msg = msgs.last()
         assert "无法删除当前使用的模型" in last_msg._content
+
+
+def make_mock_skill_registry():
+    """创建模拟 SkillRegistry。"""
+    from agent.skills import Skill, SkillRegistry
+    registry = SkillRegistry()
+    registry.skills["code-review"] = Skill(
+        name="code-review", description="审查代码质量", trigger="/review",
+        prompt="按步骤审查代码", source="builtin",
+    )
+    registry.skills["debug"] = Skill(
+        name="debug", description="调试排错", trigger="/debug",
+        prompt="按步骤调试", source="builtin",
+    )
+    return registry
+
+
+@pytest.mark.asyncio
+async def test_command_skill_list():
+    """测试 /skill 命令列出所有 Skill"""
+    agent = make_mock_agent()
+    registry = make_mock_skill_registry()
+    app = BitzApp(agent=agent, skill_registry=registry)
+    async with app.run_test() as pilot:
+        bar = app.query_one(InputBar)
+        bar._input.text = "/skill"
+        await pilot.press("enter")
+        await pilot.pause(delay=0.3)
+        msgs = app.query_one(ChatLog).query(AssistantMessage)
+        assert len(msgs) >= 1
+        last_msg = msgs.last()
+        # 检查 trigger（/review 和 /debug）出现在输出中
+        assert "/review" in last_msg._content
+        assert "/debug" in last_msg._content
+
+
+@pytest.mark.asyncio
+async def test_skill_trigger_activates():
+    """测试 /review 激活 Skill"""
+    agent = make_mock_agent()
+    registry = make_mock_skill_registry()
+    app = BitzApp(agent=agent, skill_registry=registry)
+    async with app.run_test() as pilot:
+        bar = app.query_one(InputBar)
+        bar._input.text = "/review"
+        await pilot.press("enter")
+        await pilot.pause(delay=0.3)
+        # 验证 active_skill 已设置
+        assert agent.context.active_skill is not None
+        assert agent.context.active_skill.name == "code-review"
+        # 验证 ChatLog 有激活提示
+        msgs = app.query_one(ChatLog).query(AssistantMessage)
+        assert len(msgs) >= 1
+        last_msg = msgs.last()
+        assert "已激活 Skill" in last_msg._content
+
+
+@pytest.mark.asyncio
+async def test_skill_off_clears():
+    """测试 /skill off 清除当前 Skill"""
+    agent = make_mock_agent()
+    registry = make_mock_skill_registry()
+    app = BitzApp(agent=agent, skill_registry=registry)
+    async with app.run_test() as pilot:
+        # 先激活
+        agent.context.set_active_skill(registry.get("code-review"))
+        assert agent.context.active_skill is not None
+        # 再清除
+        bar = app.query_one(InputBar)
+        bar._input.text = "/skill off"
+        await pilot.press("enter")
+        await pilot.pause(delay=0.3)
+        assert agent.context.active_skill is None
+        msgs = app.query_one(ChatLog).query(AssistantMessage)
+        last_msg = msgs.last()
+        assert "已清除" in last_msg._content

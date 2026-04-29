@@ -12,7 +12,8 @@ A minimal AI Agent with a beautiful terminal chat interface — under 1000 lines
 - **Beautiful TUI** — Markdown rendering, collapsible tool cards with status icons, syntax highlighting
 - **Theme System** — 3 themes (Dracula dark / Light / Nord), auto-detect terminal, `/theme` to switch
 - **Session Insights** — Token usage tracking, per-turn timing, step counter
-- **Slash Commands** — /help, /clear, /compact, /theme with Tab autocomplete
+- **Skill System** — Prompt-driven behavior orchestration, `/review`, `/debug`, `/explain` built-in, user-customizable via `.bitz/skills/`
+- **Slash Commands** — /help, /clear, /compact, /theme, /skill, /models with Tab autocomplete
 - **Multi-line Input** — Shift+Enter for newline, auto-expanding textarea
 - **Code Diff View** — Inline diff for file edits with syntax highlighting
 - **Mouse Support** — Scroll, click to expand/collapse, cursor positioning
@@ -35,19 +36,30 @@ tui.py (entry point)
 ├── agent/              Core Agent modules
 │   ├── loop.py         Agent — ReAct loop, confirm flow, cancellation
 │   ├── adapter.py      LLMAdapter — Anthropic API, 5x retry, cancel-aware, stream_chat()
-│   ├── context.py      Context — message history with tool_use/tool_result pairing
+│   ├── context.py      Context — message history, active_skill, tool_use/tool_result pairing
+│   ├── skills.py       SkillRegistry — load/parse .md skill files, trigger lookup
 │   ├── tools.py        ToolRegistry — register/execute, 3-tier danger detection
-│   └── builtin_tools.py  7 built-in tools
+│   ├── builtin_tools.py  7 built-in tools
+│   ├── prompt.py       System prompt builder (static + dynamic layers)
+│   └── models.py       ModelStore — multi-model config persistence
+├── skills/             Built-in Skill files
+│   ├── code-review.md  /review — code quality audit
+│   ├── debug.md        /debug — systematic debugging
+│   └── explain.md      /explain — code explanation
 └── tui/                Textual TUI
-    ├── app.py          BitzApp — agent integration, tool logger, confirm, timing
+    ├── app.py          BitzApp — agent integration, skill activation, tool logger, confirm, timing
     ├── theme.py        3 native themes + auto-detect
     └── widgets/
         ├── chat.py     ChatLog, AssistantMessage (Markdown), TurnTiming
         ├── tool_card.py  Collapsible tool cards (⟳/✓/✗ status icons)
-        ├── input.py     InputBar + /theme command
+        ├── input.py     InputBar + command/skill completion
+        ├── command_popup.py  Dynamic command+skill autocomplete
         ├── status.py    StatusBar (model, steps, tokens, CWD)
         ├── confirm.py   Inline y/n confirm prompt
-        └── banner.py    Welcome / goodbye animations
+        ├── banner.py    Welcome / goodbye animations
+        ├── model_select.py  Model selection modal
+        ├── model_add.py     Model add form modal
+        └── model_confirm.py Delete confirmation modal
 ```
 
 ## Key Data Flow
@@ -79,6 +91,7 @@ The `learning/` directory contains progressive tutorials:
 | 03 | Tools & Context | Tool registry, danger detection, context trimming |
 | 04 | TUI with Textual | Layout, events, thread safety, confirm flow, aesthetics, experience |
 | 05 | Prompt Engineering | Layered prompts, dynamic injection, tool descriptions, caching |
+| 06 | [Skill 机制](learning/06-skill-system.md) | Skill ≠ Tool、frontmatter 解析、动态 system_prompt 拼接 |
 
 ## Conventions
 

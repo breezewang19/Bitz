@@ -19,6 +19,7 @@ from tui.widgets.status import StatusBar
 from tui.widgets.model_select import ModelSelectScreen
 from tui.widgets.model_add import ModelAddScreen
 from tui.widgets.model_confirm import ModelConfirmScreen
+from agent.skills import SkillRegistry
 
 if TYPE_CHECKING:
     from agent.loop import Agent
@@ -31,10 +32,11 @@ class BitzApp(App):
         ("ctrl+l", "clear_screen", "Clear"),
     ]
 
-    def __init__(self, agent: Agent, model_store=None, **kwargs) -> None:
+    def __init__(self, agent: Agent, model_store=None, skill_registry=None, **kwargs) -> None:
         super().__init__(**kwargs)
         self._agent = agent
         self._model_store = model_store
+        self._skill_registry = skill_registry or SkillRegistry()
         self._original_execute = agent.tools.execute
         self._cancel_event = threading.Event()
         self._confirmed_tools: set = set()
@@ -50,7 +52,7 @@ class BitzApp(App):
     def compose(self) -> ComposeResult:
         yield ChatLog()
         yield StatusBar()
-        yield InputBar()
+        yield InputBar(skill_registry=self._skill_registry)
 
     def on_mount(self) -> None:
         chat = self.query_one(ChatLog)
@@ -222,7 +224,15 @@ class BitzApp(App):
                 "| `/models list` | 列出已配置模型（文本） |\n"
                 "| `/models add <id> <protocol> <base_url> <api_key> <model>` | 添加模型（文本） |\n"
                 "| `/models <id>` | 切换模型（文本） |\n"
+                "| `/skill` | 列出可用 Skill |\n"
+                "| `/skill off` | 清除当前 Skill |\n"
             )
+            # 追加 Skill 列表
+            skills = self._skill_registry.list_all()
+            if skills:
+                help_text += "\n\n## 可用 Skill\n"
+                for s in skills:
+                    help_text += f"- {s.trigger} — {s.description}\n"
             chat.add_message("assistant", help_text)
         elif command == "clear":
             self.action_clear_screen()
@@ -252,6 +262,28 @@ class BitzApp(App):
                 chat.add_message("assistant", f"主题已切换为 {THEME_NAMES[next_idx]}")
         elif command == "models":
             self._handle_models_command(args, chat)
+        elif command == "skill":
+            if args == "off":
+                if self._agent.context.active_skill:
+                    self._agent.context.clear_active_skill()
+                    chat.add_message("assistant", "已清除当前 Skill。")
+                else:
+                    chat.add_message("assistant", "当前没有激活的 Skill。")
+            else:
+                skills = self._skill_registry.list_all()
+                if not skills:
+                    chat.add_message("assistant", "没有可用的 Skill。\n在 .bitz/skills/ 目录下创建 .md 文件即可添加自定义 Skill。")
+                else:
+                    lines = ["## 可用 Skill", ""]
+                    for s in skills:
+                        lines.append(f"- **{s.trigger}** — {s.description}")
+                    active = self._agent.context.active_skill
+                    if active:
+                        lines.append(f"\n当前激活: **{active.name}** ({active.trigger})")
+                    chat.add_message("assistant", "\n".join(lines))
+        elif self._skill_registry.get_by_trigger(f"/{command}"):
+            skill = self._skill_registry.get_by_trigger(f"/{command}")
+            self._activate_skill(skill)
         else:
             chat.add_message("assistant", f"未知命令: /{command}。输入 /help 查看可用命令。")
 
@@ -308,6 +340,12 @@ class BitzApp(App):
                 chat.add_message("assistant", f"模型 '{model_id}' 不存在")
                 return
             self._switch_model(config)
+
+    def _activate_skill(self, skill) -> None:
+        """激活 Skill，注入到上下文，提示用户。"""
+        self._agent.context.set_active_skill(skill)
+        chat = self.query_one(ChatLog)
+        chat.add_message("assistant", f"已激活 Skill: **{skill.name}** — {skill.description}\n输入你的问题，我将按 `{skill.trigger}` 流程处理。")
 
     def _switch_model(self, config) -> None:
         """切换当前模型"""

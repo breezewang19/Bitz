@@ -10,6 +10,7 @@ class Context:
         self.messages: list[dict] = []
         self.max_tokens = max_tokens
         self.keep_last_n = keep_last_n
+        self._active_skill = None
 
     def add_user(self, content: str) -> None:
         """添加用户消息"""
@@ -42,6 +43,19 @@ class Context:
         self.messages.append({"role": "user", "content": blocks})
         self._trim()
 
+    def set_active_skill(self, skill) -> None:
+        """设置当前活跃的 Skill"""
+        self._active_skill = skill
+
+    def clear_active_skill(self) -> None:
+        """清除当前活跃的 Skill"""
+        self._active_skill = None
+
+    @property
+    def active_skill(self):
+        """返回当前活跃的 Skill"""
+        return self._active_skill
+
     def _trim(self) -> None:
         """保持消息数量不超过 keep_last_n，保证 tool_use/tool_result 配对完整"""
         if len(self.messages) <= self.keep_last_n:
@@ -65,4 +79,10 @@ class Context:
         """返回完整消息列表（system 作为独立条目）"""
         msgs = [{"role": "system", "content": self.system_prompt}]
         msgs.extend(self.messages)
+
+        # 动态拼接 Skill prompt 到 system 消息
+        if self._active_skill:
+            skill_section = f"\n\n[当前 Skill: {self._active_skill.name}]\n{self._active_skill.prompt}"
+            msgs[0] = {**msgs[0], "content": msgs[0]["content"] + skill_section}
+
         return msgs

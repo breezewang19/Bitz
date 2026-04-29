@@ -43,7 +43,7 @@ class AssistantMessage(Static):
     """
 
     def __init__(self, content: str) -> None:
-        super().__init__()
+        super().__init__(markup=False)
         self._content = content
 
     def compose(self):

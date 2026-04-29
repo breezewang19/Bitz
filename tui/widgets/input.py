@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from textual.widget import Widget
 from textual.widgets import TextArea
 from textual.message import Message
 from textual.events import Key
 
 from tui.widgets.command_popup import CommandPopup
+
+if TYPE_CHECKING:
+    from agent.skills import SkillRegistry
 
 
 class MessageInput(TextArea):
@@ -65,8 +70,9 @@ class InputBar(Widget):
             self.command = command  # 命令名（不含 /）
             self.args = args        # 命令参数
 
-    def __init__(self) -> None:
+    def __init__(self, skill_registry: "SkillRegistry | None" = None) -> None:
         super().__init__()
+        self._skill_registry = skill_registry
         self._history: list[str] = []
         self._history_index: int = 0
         self._saved_draft: str = ""
@@ -140,7 +146,7 @@ class InputBar(Widget):
         if text.startswith("/") and " " not in text:
             prefix = text[1:]  # 去掉 /
             if self._command_popup is None:
-                self._command_popup = CommandPopup(prefix=prefix)
+                self._command_popup = CommandPopup(prefix=prefix, skill_registry=self._skill_registry)
                 self.mount(self._command_popup)
             else:
                 self._command_popup.update_prefix(prefix)

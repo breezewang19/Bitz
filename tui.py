@@ -25,6 +25,7 @@ def main():
         from agent.builtin_tools import create_tools
         from agent.prompt import build_system_prompt
         from agent.models import ModelStore
+        from agent.skills import SkillRegistry
         from tui import BitzApp
 
         store = ModelStore()
@@ -53,7 +54,12 @@ def main():
             max_steps=20,
         )
 
-        app = BitzApp(agent=agent, model_store=store)
+        # 加载 Skill
+        skill_registry = SkillRegistry()
+        skill_registry.load_builtin(os.path.join(os.path.dirname(__file__), "skills"))
+        skill_registry.load_user(os.path.join(".", ".bitz", "skills"))
+
+        app = BitzApp(agent=agent, model_store=store, skill_registry=skill_registry)
         app.run()
 
 
