@@ -444,3 +444,44 @@ class TestAutoTrigger:
         skill = _parse_skill_file(str(f), "builtin")
         assert skill is not None
         assert skill.auto_trigger is True
+
+
+class TestSkillSummary:
+    def test_summary_single_file_skill(self):
+        """单文件 skill 的 summary 包含完整 prompt"""
+        skill = Skill(name="debug", description="调试排错", trigger="/debug", prompt="调试流程", source="builtin")
+        s = skill.summary()
+        assert "[Skill: debug]" in s
+        assert "调试排错" in s
+        assert "调试流程" in s
+
+    def test_summary_directory_skill(self):
+        """目录型 skill 的 summary 不包含完整 prompt，包含 skill_dir 提示"""
+        skill = Skill(
+            name="admin-review", description="行政案件审查", trigger="/admin-review",
+            prompt="很长的审查流程...", source="builtin", skill_dir="/path/to/skill",
+        )
+        s = skill.summary()
+        assert "[Skill: admin-review]" in s
+        assert "行政案件审查" in s
+        assert "/path/to/skill" in s
+        assert "read_file" in s
+        assert "很长的审查流程" not in s
+
+    def test_summary_description_truncation(self):
+        """description 超过 max_description_chars 时截断"""
+        long_desc = "这是一个非常非常长的描述" * 50
+        skill = Skill(name="test", description=long_desc, trigger="/test", prompt="流程", source="builtin")
+        s = skill.summary(max_description_chars=100)
+        assert len(s) < len(long_desc)
+        assert "…" in s
+
+    def test_registry_max_description_chars(self):
+        """SkillRegistry 的 max_description_chars 配置传递到 summary"""
+        registry = SkillRegistry(max_description_chars=50)
+        assert registry.max_description_chars == 50
+
+    def test_registry_default_max_description_chars(self):
+        """SkillRegistry 默认 max_description_chars=200"""
+        registry = SkillRegistry()
+        assert registry.max_description_chars == 200

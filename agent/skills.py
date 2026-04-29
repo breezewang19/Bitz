@@ -18,6 +18,19 @@ class Skill:
     skill_dir: str | None = None  # 目录型 Skill 的根路径
     auto_trigger: bool = True  # 是否自动触发（缺省为 True）
 
+    def summary(self, max_description_chars: int = 200) -> str:
+        """生成 L1 摘要文本。目录型 skill 仅含摘要+路径提示，单文件 skill 含完整 prompt。"""
+        desc = self.description
+        if len(desc) > max_description_chars:
+            desc = desc[:max_description_chars - 1] + "…"
+        if self.skill_dir:
+            return (
+                f"[Skill: {self.name}] {desc}\n"
+                f"资源目录: {self.skill_dir}\n"
+                f"使用 read_file 读取 {self.skill_dir}/SKILL.md 获取完整指令。"
+            )
+        return f"[Skill: {self.name}] {desc}\n{self.prompt}"
+
 
 _REQUIRED_FIELDS = {"name", "description", "trigger"}
 
@@ -71,8 +84,10 @@ def _parse_skill_file(filepath: str, source: str) -> Skill | None:
 
 
 class SkillRegistry:
-    def __init__(self) -> None:
+    def __init__(self, max_description_chars: int = 200, max_skills_chars: int = 2000) -> None:
         self.skills: dict[str, Skill] = {}
+        self.max_description_chars = max_description_chars
+        self.max_skills_chars = max_skills_chars
 
     def load_builtin(self, path: str) -> None:
         """从目录加载内置 Skill。"""
@@ -96,6 +111,20 @@ class SkillRegistry:
 
     def triggers(self) -> list[str]:
         return [s.trigger for s in self.skills.values()]
+
+    def build_skills_summary(self) -> str:
+        """生成所有 auto_trigger=True 的 skill 摘要，总长不超过 max_skills_chars。"""
+        parts = []
+        total = 0
+        for skill in self.list_all():
+            if not skill.auto_trigger:
+                continue
+            s = skill.summary(max_description_chars=self.max_description_chars)
+            if total + len(s) > self.max_skills_chars:
+                break
+            parts.append(s)
+            total += len(s)
+        return "\n\n".join(parts)
 
     def _load_from_dir(self, path: str, source: str) -> None:
         """从目录扫描 .md 文件和 SKILL.md 目录型 Skill 并加载。"""
