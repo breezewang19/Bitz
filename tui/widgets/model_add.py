@@ -3,16 +3,14 @@ from __future__ import annotations
 from textual.screen import ModalScreen
 from textual.widgets import Input, Button, Static, Select
 from textual.containers import Vertical, Horizontal
-from rich.text import Text
-
-from tui.theme import COLORS
 
 
-# Provider 预设
+# Provider 预设: (protocol, base_url)
 PROVIDER_PRESETS = {
-    "openai": "https://api.openai.com/v1",
-    "anthropic": "https://api.anthropic.com",
-    "custom": "",
+    "openai": ("openai", "https://api.openai.com/v1"),
+    "anthropic": ("anthropic", "https://api.anthropic.com"),
+    "custom_openai": ("openai", ""),
+    "custom_anthropic": ("anthropic", ""),
 }
 
 
@@ -83,7 +81,8 @@ class ModelAddScreen(ModalScreen):
             yield Input(placeholder="模型标识，如 gpt-4o", id="id-input")
             yield Static("Provider", classes="form-label")
             yield Select(
-                [("OpenAI", "openai"), ("Anthropic", "anthropic"), ("自定义", "custom")],
+                [("OpenAI", "openai"), ("Anthropic", "anthropic"),
+                 ("自定义 (OpenAI 协议)", "custom_openai"), ("自定义 (Anthropic 协议)", "custom_anthropic")],
                 value="openai",
                 id="provider-select",
             )
@@ -103,7 +102,7 @@ class ModelAddScreen(ModalScreen):
             provider = event.value
             base_url_input = self.query_one("#base-url-input", Input)
             if provider in PROVIDER_PRESETS:
-                base_url_input.value = PROVIDER_PRESETS[provider]
+                base_url_input.value = PROVIDER_PRESETS[provider][1]
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel-btn":
@@ -136,11 +135,14 @@ class ModelAddScreen(ModalScreen):
                 self.dismiss(None)
                 return
 
+            # 从预设中获取 protocol
+            protocol = PROVIDER_PRESETS.get(provider, (provider, ""))[0]
+
             from agent.models import ModelConfig
             try:
                 config = ModelConfig(
                     id=id_val,
-                    protocol=provider,
+                    protocol=protocol,
                     base_url=base_url,
                     api_key=api_key,
                     model=model,
