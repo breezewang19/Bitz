@@ -63,8 +63,13 @@ class ThinkingIndicator(Static):
     DEFAULT_CSS = """
     ThinkingIndicator {
         color: #8be9fd;
-        margin: 0 0 1 0;
+        margin: 0 0 0 0;
         padding: 0 1;
+        height: 1;
+        display: none;
+    }
+    ThinkingIndicator.visible {
+        display: block;
     }
     """
 
@@ -117,6 +122,15 @@ class ThinkingIndicator(Static):
     def set_tool(self, tool_name: str | None) -> None:
         self._tool_name = tool_name
         self.refresh()
+
+    def show(self) -> None:
+        self._canceling = False
+        self._tool_name = None
+        self._frame = 0
+        self.add_class("visible")
+
+    def hide(self) -> None:
+        self.remove_class("visible")
 
 
 def format_tool_content(name: str, args: dict | None = None) -> str:
@@ -195,14 +209,8 @@ class ChatLog(VerticalScroll):
 
     def __init__(self) -> None:
         super().__init__()
-        self._thinking_indicator: ThinkingIndicator | None = None
 
     def add_message(self, role: str, content: str, tool_name: str = "") -> None:
-        # Only hide thinking when assistant speaks — tool calls happen mid-thinking
-        if role == "assistant" and self._thinking_indicator is not None:
-            self._thinking_indicator.remove()
-            self._thinking_indicator = None
-
         if role == "user":
             msg_widget = UserMessage(content)
         elif role == "assistant":
@@ -215,30 +223,6 @@ class ChatLog(VerticalScroll):
         self.mount(msg_widget)
         self.call_after_refresh(self._scroll_to_bottom)
         self.post_message(self.MessageAdded(role, content))
-
-    def show_thinking(self) -> None:
-        if self._thinking_indicator is not None:
-            return
-        self._thinking_indicator = ThinkingIndicator()
-        self.mount(self._thinking_indicator)
-        self.call_after_refresh(self._scroll_to_bottom)
-
-    def update_thinking(self) -> None:
-        if self._thinking_indicator is not None:
-            self._thinking_indicator.advance()
-
-    def set_canceling(self) -> None:
-        if self._thinking_indicator is not None:
-            self._thinking_indicator.set_canceling()
-
-    def set_tool_running(self, tool_name: str | None) -> None:
-        if self._thinking_indicator is not None:
-            self._thinking_indicator.set_tool(tool_name)
-
-    def hide_thinking(self) -> None:
-        if self._thinking_indicator is not None:
-            self._thinking_indicator.remove()
-            self._thinking_indicator = None
 
     def _scroll_to_bottom(self) -> None:
         self.scroll_end(animate=False)

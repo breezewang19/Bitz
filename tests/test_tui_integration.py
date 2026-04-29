@@ -26,8 +26,8 @@ async def test_full_conversation_flow():
         user_msgs = chat.query(UserMessage)
         assert len(user_msgs) >= 1
 
-        thinking = chat.query(ThinkingIndicator)
-        assert len(thinking) == 0
+        thinking = app.query(ThinkingIndicator)
+        assert len(thinking) == 1  # ThinkingIndicator is a separate component, always present
 
         assistant_msgs = chat.query(AssistantMessage)
         assert len(assistant_msgs) >= 1

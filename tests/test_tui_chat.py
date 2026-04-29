@@ -8,10 +8,15 @@ from tui.widgets.tool_card import ToolCard
 
 
 class ChatTestApp(App):
-    CSS = ""
+    CSS = """
+    ChatLog {
+        height: 20;
+    }
+    """
 
     def compose(self) -> ComposeResult:
         yield ChatLog()
+        yield ThinkingIndicator()
 
 
 @pytest.mark.asyncio
@@ -65,12 +70,10 @@ async def test_assistant_markdown_render():
 async def test_thinking_indicator():
     app = ChatTestApp()
     async with app.run_test() as pilot:
-        chat = app.query_one(ChatLog)
-        chat.show_thinking()
+        indicator = app.query_one(ThinkingIndicator)
+        indicator.show()
         await pilot.pause()
-        indicators = chat.query(ThinkingIndicator)
-        assert len(indicators) == 1
-        rendered = indicators.first().render()
+        rendered = indicator.render()
         assert "Thinking" in rendered.plain
 
 
@@ -78,26 +81,20 @@ async def test_thinking_indicator():
 async def test_thinking_cancel_state():
     app = ChatTestApp()
     async with app.run_test() as pilot:
-        chat = app.query_one(ChatLog)
-        chat.show_thinking()
+        indicator = app.query_one(ThinkingIndicator)
+        indicator.show()
         await pilot.pause()
-        indicator = chat.query_one(ThinkingIndicator)
         indicator.set_canceling()
         rendered = indicator.render()
         assert "Canceling" in rendered.plain
 
 
 @pytest.mark.asyncio
-async def test_thinking_indicator_removes_on_response():
+async def test_thinking_indicator_hidden_by_default():
     app = ChatTestApp()
     async with app.run_test() as pilot:
-        chat = app.query_one(ChatLog)
-        chat.show_thinking()
-        await pilot.pause()
-        chat.add_message("assistant", "Done thinking")
-        await pilot.pause()
-        indicators = chat.query(ThinkingIndicator)
-        assert len(indicators) == 0
+        indicator = app.query_one(ThinkingIndicator)
+        assert not indicator.has_class("visible")
 
 
 @pytest.mark.asyncio
@@ -127,10 +124,9 @@ async def test_format_tool_content():
 async def test_thinking_elapsed_display():
     app = ChatTestApp()
     async with app.run_test() as pilot:
-        chat = app.query_one(ChatLog)
-        chat.show_thinking()
+        indicator = app.query_one(ThinkingIndicator)
+        indicator.show()
         await pilot.pause()
-        indicator = chat.query_one(ThinkingIndicator)
         indicator.set_elapsed(3.2)
         rendered = indicator.render()
         assert "3.2s" in rendered.plain
@@ -140,10 +136,9 @@ async def test_thinking_elapsed_display():
 async def test_thinking_elapsed_over_60s():
     app = ChatTestApp()
     async with app.run_test() as pilot:
-        chat = app.query_one(ChatLog)
-        chat.show_thinking()
+        indicator = app.query_one(ThinkingIndicator)
+        indicator.show()
         await pilot.pause()
-        indicator = chat.query_one(ThinkingIndicator)
         indicator.set_elapsed(83.0)
         rendered = indicator.render()
         assert "1m 23s" in rendered.plain

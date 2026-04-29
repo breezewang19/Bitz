@@ -12,7 +12,7 @@ from textual.events import Key
 
 from tui.theme import BITZ_CSS
 from tui.widgets.banner import BannerWidget, GoodbyeWidget
-from tui.widgets.chat import ChatLog, format_tool_content
+from tui.widgets.chat import ChatLog, format_tool_content, ThinkingIndicator
 from tui.widgets.confirm import ConfirmPrompt
 from tui.widgets.input import InputBar
 from tui.widgets.status import StatusBar
@@ -51,6 +51,7 @@ class BitzApp(App):
 
     def compose(self) -> ComposeResult:
         yield ChatLog()
+        yield ThinkingIndicator()
         yield StatusBar()
         yield InputBar(skill_registry=self._skill_registry)
 
@@ -165,8 +166,11 @@ class BitzApp(App):
             pass
 
     def _update_tool_running(self, tool_name: str | None) -> None:
-        chat = self.query_one(ChatLog)
-        chat.set_tool_running(tool_name)
+        try:
+            indicator = self.query_one(ThinkingIndicator)
+            indicator.set_tool(tool_name)
+        except Exception:
+            pass
 
     
     def _post_tool_result(self, tool_name: str, result: str, is_error: bool, diff_text: str = None) -> None:
@@ -474,8 +478,7 @@ class BitzApp(App):
         # ESC: cancel running agent
         if event.key == "escape" and bar._busy:
             self._cancel_event.set()
-            chat = self.query_one(ChatLog)
-            chat.set_canceling()
+            self.query_one(ThinkingIndicator).set_canceling()
             event.prevent_default()
             return
 
@@ -483,8 +486,7 @@ class BitzApp(App):
         if event.key == "ctrl+c":
             if bar._busy:
                 self._cancel_event.set()
-                chat = self.query_one(ChatLog)
-                chat.set_canceling()
+                self.query_one(ThinkingIndicator).set_canceling()
                 event.prevent_default()
             else:
                 self.action_quit()
@@ -507,17 +509,15 @@ class BitzApp(App):
             return
         if bar._busy:
             self._cancel_event.set()
-            chat = self.query_one(ChatLog)
-            chat.set_canceling()
+            self.query_one(ThinkingIndicator).set_canceling()
 
     def _run_agent(self, user_input: str) -> None:
         self._cancel_event.clear()
         self._confirmed_tools.clear()
         self._turn_start = time.monotonic()
-        chat = self.query_one(ChatLog)
         bar = self.query_one(InputBar)
         self._stop_thinking_animation()
-        chat.show_thinking()
+        self.query_one(ThinkingIndicator).show()
         bar.set_busy(True)
         self._start_thinking_animation()
         asyncio.create_task(self._agent_loop(user_input))
@@ -531,7 +531,7 @@ class BitzApp(App):
             self._cancel_event.clear()
             chat = self.query_one(ChatLog)
             self._stop_thinking_animation()
-            chat.show_thinking()
+            self.query_one(ThinkingIndicator).show()
             self._start_thinking_animation()
 
             try:
@@ -545,14 +545,14 @@ class BitzApp(App):
                 )
             except Exception as e:
                 self._stop_thinking_animation()
-                chat.hide_thinking()
+                self.query_one(ThinkingIndicator).hide()
                 chat.add_message("assistant", f"[Error] {e}")
                 self._mount_turn_timing(chat)
                 bar.set_busy(False)
                 return
 
             self._stop_thinking_animation()
-            chat.hide_thinking()
+            self.query_one(ThinkingIndicator).hide()
 
             if self._cancel_event.is_set():
                 chat.add_message("assistant", "[ESC] 已中断")
@@ -562,7 +562,7 @@ class BitzApp(App):
 
             if result.startswith("[CONFIRM_REQUIRED]"):
                 self._stop_thinking_animation()
-                chat.hide_thinking()
+                self.query_one(ThinkingIndicator).hide()
 
                 parts = result.split()
                 tool_id = parts[1] if len(parts) >= 2 else ""
@@ -688,13 +688,16 @@ class BitzApp(App):
             self._thinking_task = None
 
     async def _thinking_animation_loop(self) -> None:
-        chat = self.query_one(ChatLog)
         try:
             while True:
-                chat.update_thinking()
-                if self._turn_start > 0 and chat._thinking_indicator is not None:
-                    elapsed = time.monotonic() - self._turn_start
-                    chat._thinking_indicator.set_elapsed(elapsed)
+                try:
+                    indicator = self.query_one(ThinkingIndicator)
+                    indicator.advance()
+                    if self._turn_start > 0:
+                        elapsed = time.monotonic() - self._turn_start
+                        indicator.set_elapsed(elapsed)
+                except Exception:
+                    pass
                 await asyncio.sleep(0.08)
         except asyncio.CancelledError:
             pass
@@ -705,8 +708,6 @@ class BitzApp(App):
         from tui.widgets.tool_card import ToolCard
         for widget_type in (UserMessage, AssistantMessage, ToolCard, TurnTiming):
             chat.query(widget_type).remove()
-        chat._thinking_indicator = None
-        chat._streaming_message = None
 
     def action_quit(self) -> None:
         if self._exiting:
