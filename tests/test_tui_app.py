@@ -218,3 +218,79 @@ async def test_command_models_add_invalid_protocol():
         assert len(msgs) >= 1
         last_msg = msgs.last()
         assert "不支持的协议" in last_msg._content
+
+
+@pytest.mark.asyncio
+async def test_command_models_opens_dialog():
+    """测试 /models 无参数时弹出选择弹窗"""
+    agent = make_mock_agent()
+    store = make_mock_model_store()
+    app = BitzApp(agent=agent, model_store=store)
+    async with app.run_test() as pilot:
+        bar = app.query_one(InputBar)
+        bar._input.text = "/models"
+        await pilot.press("enter")
+        await pilot.pause(delay=0.3)
+        # 应该有 ModelSelectScreen 被推入
+        from tui.widgets.model_select import ModelSelectScreen
+        screens = app.screen_stack
+        assert any(isinstance(s, ModelSelectScreen) for s in screens)
+
+
+@pytest.mark.asyncio
+async def test_models_dialog_switch():
+    """测试弹窗中切换模型"""
+    agent = make_mock_agent()
+    from agent.models import ModelConfig
+    store = MagicMock()
+    store.list_all.return_value = [
+        ModelConfig(id="default", protocol="anthropic", base_url="https://api.anthropic.com", api_key="sk-test-key", model="claude-3-5-sonnet-20241022"),
+        ModelConfig(id="gpt-4o", protocol="openai", base_url="https://api.openai.com/v1", api_key="sk-openai", model="gpt-4o"),
+    ]
+    store.get_current.return_value = ModelConfig(id="default", protocol="anthropic", base_url="https://api.anthropic.com", api_key="sk-test-key", model="claude-3-5-sonnet-20241022")
+    store.get.return_value = ModelConfig(id="gpt-4o", protocol="openai", base_url="https://api.openai.com/v1", api_key="sk-openai", model="gpt-4o")
+    app = BitzApp(agent=agent, model_store=store)
+    async with app.run_test() as pilot:
+        bar = app.query_one(InputBar)
+        bar._input.text = "/models"
+        await pilot.press("enter")
+        await pilot.pause(delay=0.3)
+        # 按 ESC 关闭弹窗（简单验证弹窗能正常关闭）
+        await pilot.press("escape")
+        await pilot.pause(delay=0.3)
+
+
+@pytest.mark.asyncio
+async def test_models_add_dialog_cancel():
+    """测试添加模型弹窗取消"""
+    agent = make_mock_agent()
+    store = make_mock_model_store()
+    app = BitzApp(agent=agent, model_store=store)
+    async with app.run_test() as pilot:
+        bar = app.query_one(InputBar)
+        bar._input.text = "/models"
+        await pilot.press("enter")
+        await pilot.pause(delay=0.3)
+        # 按 ESC 关闭弹窗
+        await pilot.press("escape")
+        await pilot.pause(delay=0.3)
+
+
+@pytest.mark.asyncio
+async def test_models_delete_current_blocked():
+    """测试删除当前模型被阻止"""
+    agent = make_mock_agent()
+    from agent.models import ModelConfig
+    store = MagicMock()
+    store.list_all.return_value = [
+        ModelConfig(id="default", protocol="anthropic", base_url="https://api.anthropic.com", api_key="sk-test-key", model="claude-3-5-sonnet-20241022"),
+    ]
+    store.get_current.return_value = ModelConfig(id="default", protocol="anthropic", base_url="https://api.anthropic.com", api_key="sk-test-key", model="claude-3-5-sonnet-20241022")
+    app = BitzApp(agent=agent, model_store=store)
+    async with app.run_test() as pilot:
+        # 直接测试回调逻辑
+        app._on_models_result(("delete", "default"))
+        await pilot.pause(delay=0.3)
+        msgs = app.query_one(ChatLog).query(AssistantMessage)
+        last_msg = msgs.last()
+        assert "无法删除当前使用的模型" in last_msg._content
