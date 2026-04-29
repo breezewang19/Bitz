@@ -219,10 +219,15 @@ class LLMAdapter:
             return LLMResponse(content=text_content, stop_reason="end_turn")
 
         if stop_reason == "tool_use":
-            # 解析工具调用
+            # 解析工具调用，同时保留文字块（LLM 的中间思考/说明）
             blocks = []
             for block in response.content:
-                if block.type == "tool_use":
+                if block.type == "text":
+                    blocks.append({
+                        "type": "text",
+                        "text": block.text,
+                    })
+                elif block.type == "tool_use":
                     blocks.append({
                         "type": "tool_use",
                         "id": block.id,
@@ -363,6 +368,10 @@ class LLMAdapter:
 
         if finish_reason == "tool_calls" and message.get("tool_calls"):
             blocks = []
+            # 保留文字块（LLM 的中间思考/说明）
+            text_content = message.get("content", "") or ""
+            if text_content:
+                blocks.append({"type": "text", "text": text_content})
             for tc in message["tool_calls"]:
                 blocks.append({
                     "type": "tool_use",

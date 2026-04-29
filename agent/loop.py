@@ -16,6 +16,7 @@ class Agent:
         self.max_steps = max_steps
         self._pending_confirm: tuple = None  # (tool_id, tool_name, tool_args, result)
         self._confirmed_results: list = []   # 已确认但未写入上下文的工具结果
+        self._on_text: callable = None  # 中间文字输出回调（由 TUI 设置）
 
     def run(self, user_input: str, cancel_event: threading.Event = None,
             confirmed_tools: set = None, skip_add_user: bool = False) -> str:
@@ -46,10 +47,22 @@ class Agent:
                 return response.content
 
             if response.stop_reason == "tool_use":
+                # 提取文字块（LLM 的中间思考/说明），输出到 UI
+                text_parts = []
+                tool_blocks = []
+                for block in response.content:
+                    if block.get("type") == "text":
+                        text_parts.append(block["text"])
+                    elif block.get("type") == "tool_use":
+                        tool_blocks.append(block)
+
+                if text_parts and self._on_text:
+                    self._on_text("\n".join(text_parts))
+
                 pending_tools = []
                 confirmed_results = []
 
-                for tool_use in response.content:
+                for tool_use in tool_blocks:
                     tool_name = tool_use["name"]
                     tool_args = tool_use["input"]
                     tool_id = tool_use["id"]

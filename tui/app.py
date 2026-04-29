@@ -69,6 +69,7 @@ class BitzApp(App):
         self.theme = detect_theme()
         self._install_tool_logger()
         self._install_retry_logger()
+        self._install_text_callback()
 
     def _install_tool_logger(self) -> None:
         """Monkey-patch tools.execute to log tool calls to UI via ToolCard."""
@@ -139,6 +140,22 @@ class BitzApp(App):
     def _show_retry_info(self, err_msg: str, attempt: int, max_retries: int) -> None:
         chat = self.query_one(ChatLog)
         chat.add_message("tool", f"重试 {attempt}/{max_retries}: {err_msg}", tool_name="retry")
+
+    def _install_text_callback(self) -> None:
+        """设置 Agent 的中间文字输出回调，让 LLM 的自言自语显示在 UI。"""
+        app = self
+
+        def on_text(text: str) -> None:
+            try:
+                app.call_from_thread(app._show_intermediate_text, text)
+            except Exception:
+                pass
+
+        self._agent._on_text = on_text
+
+    def _show_intermediate_text(self, text: str) -> None:
+        chat = self.query_one(ChatLog)
+        chat.add_message("assistant", text)
 
     def _set_tool_running(self, tool_name: str | None) -> None:
         """Thread-safe: update thinking indicator to show tool running state."""
