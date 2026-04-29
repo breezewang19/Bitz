@@ -279,7 +279,7 @@ def run_agent(get_input_fn: Callable[[list[str]], str]):
         llm_adapter=adapter,
         tools=tools,
         context=context,
-        max_steps=20
+        max_steps=100
     )
 
     print_banner()

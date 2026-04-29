@@ -12,7 +12,7 @@ A minimal AI Agent with a beautiful terminal chat interface — under 1000 lines
 - **Beautiful TUI** — Markdown rendering, collapsible tool cards with status icons, syntax highlighting
 - **Theme System** — 3 themes (Dracula dark / Light / Nord), auto-detect terminal, `/theme` to switch
 - **Session Insights** — Token usage tracking, per-turn timing, step counter
-- **Skill System** — Prompt-driven behavior orchestration, `/review`, `/debug`, `/explain` built-in, user-customizable via `.bitz/skills/`
+- **Skill System** — Prompt-driven behavior orchestration, `/review`, `/debug`, `/explain` built-in, user-customizable via `.bitz/skills/`; supports directory-type skills with rules/ and references/ subdirectories (e.g. `/admin-review`)
 - **Slash Commands** — /help, /clear, /compact, /theme, /skill, /models with Tab autocomplete
 - **Multi-line Input** — Shift+Enter for newline, auto-expanding textarea
 - **Code Diff View** — Inline diff for file edits with syntax highlighting
