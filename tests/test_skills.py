@@ -553,3 +553,32 @@ class TestSkillsSummaryInPrompt:
             )
         summary = registry.build_skills_summary()
         assert len(summary) <= 100
+
+
+class TestAutoTriggerDetection:
+    def test_detect_skill_trigger_in_response(self):
+        """检测 LLM 回复中的 /skill-name 格式"""
+        from agent.skills import SkillRegistry
+        registry = SkillRegistry()
+        registry.skills["debug"] = Skill(name="debug", description="调试", trigger="/debug", prompt="流程", source="builtin", auto_trigger=True)
+        # 回复以 /debug 开头
+        result = "/debug\n我来帮你调试这个问题。"
+        trigger = None
+        for skill in registry.list_all():
+            if skill.auto_trigger and result.strip().startswith(skill.trigger):
+                trigger = skill.trigger
+                break
+        assert trigger == "/debug"
+
+    def test_no_false_positive_on_regular_text(self):
+        """普通文本不误触发"""
+        from agent.skills import SkillRegistry
+        registry = SkillRegistry()
+        registry.skills["debug"] = Skill(name="debug", description="调试", trigger="/debug", prompt="流程", source="builtin", auto_trigger=True)
+        result = "你可以使用 /debug 命令来调试"
+        trigger = None
+        for skill in registry.list_all():
+            if skill.auto_trigger and result.strip().startswith(skill.trigger):
+                trigger = skill.trigger
+                break
+        assert trigger is None  # 不以 /debug 开头，不触发

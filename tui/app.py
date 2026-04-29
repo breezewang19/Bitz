@@ -345,7 +345,20 @@ class BitzApp(App):
         """激活 Skill，注入到上下文，提示用户。"""
         self._agent.context.set_active_skill(skill)
         chat = self.query_one(ChatLog)
-        chat.add_message("assistant", f"已激活 Skill: **{skill.name}** — {skill.description}\n输入你的问题，我将按 `{skill.trigger}` 流程处理。")
+        msg = f"已激活 Skill: **{skill.name}** — {skill.description}\n输入你的问题，我将按 `{skill.trigger}` 流程处理。"
+        if skill.skill_dir:
+            msg += f"\n（目录型 Skill，规则文件位于: {skill.skill_dir}）"
+        chat.add_message("assistant", msg)
+
+    def _check_auto_trigger(self, text: str):
+        """检测 LLM 回复是否以 /skill-name 开头，返回匹配的 Skill 或 None。"""
+        stripped = text.strip()
+        if not stripped.startswith("/"):
+            return None
+        for skill in self._skill_registry.list_all():
+            if skill.auto_trigger and stripped.startswith(skill.trigger):
+                return skill
+        return None
 
     def _switch_model(self, config) -> None:
         """切换当前模型"""
@@ -625,6 +638,15 @@ class BitzApp(App):
     def _process_agent_result(self, result: str) -> None:
         from tui.widgets.chat import TurnTiming
         chat = self.query_one(ChatLog)
+        # 自动触发检测：LLM 回复以 /skill-name 开头时自动激活
+        triggered = self._check_auto_trigger(result)
+        if triggered is not None:
+            # 去掉 trigger 前缀，显示剩余内容
+            remaining = result.strip()[len(triggered.trigger):].strip()
+            if remaining:
+                chat.add_message("assistant", remaining)
+            self._activate_skill(triggered)
+            return
         chat.add_message("assistant", result)
         self._mount_turn_timing(chat)
         self._step_count += 1
