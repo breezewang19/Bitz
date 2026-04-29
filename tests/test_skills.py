@@ -374,7 +374,7 @@ class TestDirectoryTypeSkill:
 
 class TestContextDirectorySkill:
     def test_get_messages_with_directory_skill_injects_path(self):
-        """测试目录型 Skill 激活时 system 消息包含资源目录路径"""
+        """测试目录型 Skill 激活时 system 消息包含 L1 摘要（含资源目录路径）"""
         from agent.context import Context
         ctx = Context(system_prompt="你是 Bitz-Cat")
         ctx.add_user("你好")
@@ -389,9 +389,10 @@ class TestContextDirectorySkill:
         ctx.set_active_skill(skill)
         msgs = ctx.get_messages()
         assert msgs[0]["role"] == "system"
-        assert "当前 Skill: admin-review" in msgs[0]["content"]
-        assert "Skill 资源目录" in msgs[0]["content"]
+        # 分层注入后，目录型 skill 仅注入 summary
+        assert "[Skill: admin-review]" in msgs[0]["content"]
         assert "/abs/path/to/skill" in msgs[0]["content"]
+        assert "read_file" in msgs[0]["content"]
 
     def test_get_messages_with_single_file_skill_no_path_injection(self):
         """测试单文件 Skill 不注入资源目录路径"""
@@ -485,3 +486,46 @@ class TestSkillSummary:
         """SkillRegistry 默认 max_description_chars=200"""
         registry = SkillRegistry()
         assert registry.max_description_chars == 200
+
+
+class TestLayeredInjection:
+    def test_directory_skill_injects_summary_only(self):
+        """目录型 skill 激活时 system 消息仅包含 L1 摘要，不包含完整 prompt"""
+        from agent.context import Context
+        ctx = Context(system_prompt="你是 Bitz-Cat")
+        ctx.add_user("你好")
+        skill = Skill(
+            name="admin-review", description="行政案件审查", trigger="/admin-review",
+            prompt="这是很长的审查流程指令，包含4个阶段...", source="builtin",
+            skill_dir="/path/to/admin-review",
+        )
+        ctx.set_active_skill(skill)
+        msgs = ctx.get_messages()
+        system_content = msgs[0]["content"]
+        assert "[Skill: admin-review]" in system_content
+        assert "/path/to/admin-review" in system_content
+        assert "read_file" in system_content
+        assert "这是很长的审查流程指令" not in system_content
+
+    def test_single_file_skill_injects_full_prompt(self):
+        """单文件 skill 激活时 system 消息包含完整 prompt"""
+        from agent.context import Context
+        ctx = Context(system_prompt="你是 Bitz-Cat")
+        ctx.add_user("你好")
+        skill = Skill(
+            name="debug", description="调试排错", trigger="/debug",
+            prompt="调试流程指令", source="builtin",
+        )
+        ctx.set_active_skill(skill)
+        msgs = ctx.get_messages()
+        system_content = msgs[0]["content"]
+        assert "当前 Skill: debug" in system_content
+        assert "调试流程指令" in system_content
+
+    def test_no_active_skill_no_injection(self):
+        """无活跃 skill 时不注入任何内容"""
+        from agent.context import Context
+        ctx = Context(system_prompt="你是 Bitz-Cat")
+        ctx.add_user("你好")
+        msgs = ctx.get_messages()
+        assert msgs[0]["content"] == "你是 Bitz-Cat"

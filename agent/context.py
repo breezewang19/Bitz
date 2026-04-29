@@ -80,9 +80,15 @@ class Context:
         msgs = [{"role": "system", "content": self.system_prompt}]
         msgs.extend(self.messages)
 
-        # 动态拼接 Skill prompt 到 system 消息
+        # 动态拼接 Skill 到 system 消息（分层注入）
         if self._active_skill:
-            skill_section = f"\n\n[当前 Skill: {self._active_skill.name}]\n{self._active_skill.prompt}"
+            skill = self._active_skill
+            if skill.skill_dir:
+                # 目录型 Skill：仅注入 L1 摘要，agent 按需 read_file SKILL.md
+                skill_section = f"\n\n{skill.summary()}"
+            else:
+                # 单文件 Skill：全量注入 prompt
+                skill_section = f"\n\n[当前 Skill: {skill.name}]\n{skill.prompt}"
             msgs[0] = {**msgs[0], "content": msgs[0]["content"] + skill_section}
 
         return msgs
