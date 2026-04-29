@@ -100,3 +100,13 @@ class ModelStore:
         data = self._load()
         data["current"] = id
         self._save(data)
+
+    def remove(self, id: str) -> None:
+        """删除指定模型，若为当前模型则自动切换到第一个"""
+        data = self._load()
+        if not any(m["id"] == id for m in data["models"]):
+            raise ValueError(f"模型 '{id}' 不存在")
+        data["models"] = [m for m in data["models"] if m["id"] != id]
+        if data["current"] == id:
+            data["current"] = data["models"][0]["id"] if data["models"] else None
+        self._save(data)

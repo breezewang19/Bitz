@@ -180,3 +180,58 @@ class TestModelStore:
             store.init_from_env()
         config = store.get("default")
         assert config.masked_key() == "sk-a...123"
+
+    def test_remove_model(self, tmp_path):
+        """删除模型"""
+        config_path = tmp_path / "models.json"
+        with patch.dict(os.environ, {
+            "ANTHROPIC_API_KEY": "sk-test",
+            "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+            "ANTHROPIC_MODEL": "claude-3-5-sonnet-20241022",
+        }):
+            store = ModelStore(config_path=config_path)
+            store.init_from_env()
+
+        store.add(ModelConfig(
+            id="gpt-4o", protocol="openai",
+            base_url="https://api.openai.com/v1",
+            api_key="sk-openai", model="gpt-4o",
+        ))
+        assert len(store.list_all()) == 2
+        store.remove("gpt-4o")
+        assert len(store.list_all()) == 1
+        assert store.get("gpt-4o") is None
+
+    def test_remove_nonexistent_raises(self, tmp_path):
+        """删除不存在的模型应报错"""
+        config_path = tmp_path / "models.json"
+        with patch.dict(os.environ, {
+            "ANTHROPIC_API_KEY": "sk-test",
+            "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+            "ANTHROPIC_MODEL": "claude-3-5-sonnet-20241022",
+        }):
+            store = ModelStore(config_path=config_path)
+            store.init_from_env()
+
+        with pytest.raises(ValueError, match="不存在"):
+            store.remove("nonexistent")
+
+    def test_remove_current_switches_to_first(self, tmp_path):
+        """删除当前模型时自动切换到第一个"""
+        config_path = tmp_path / "models.json"
+        with patch.dict(os.environ, {
+            "ANTHROPIC_API_KEY": "sk-test",
+            "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+            "ANTHROPIC_MODEL": "claude-3-5-sonnet-20241022",
+        }):
+            store = ModelStore(config_path=config_path)
+            store.init_from_env()
+
+        store.add(ModelConfig(
+            id="gpt-4o", protocol="openai",
+            base_url="https://api.openai.com/v1",
+            api_key="sk-openai", model="gpt-4o",
+        ))
+        store.set_current("gpt-4o")
+        store.remove("gpt-4o")
+        assert store.get_current().id == "default"
