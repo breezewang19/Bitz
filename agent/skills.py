@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import yaml
 
@@ -15,6 +15,8 @@ class Skill:
     trigger: str
     prompt: str
     source: str  # "builtin" 或 "user"
+    skill_dir: str | None = None  # 目录型 Skill 的根路径
+    auto_trigger: bool = True  # 是否自动触发（缺省为 True）
 
 
 _REQUIRED_FIELDS = {"name", "description", "trigger"}
@@ -47,12 +49,24 @@ def _parse_skill_file(filepath: str, source: str) -> Skill | None:
         return None
 
     prompt = content[match.end():].strip()
+
+    # 解析 auto_trigger，支持多种格式
+    auto_trigger_raw = meta.get("auto_trigger", True)
+    auto_trigger: bool = True
+    if isinstance(auto_trigger_raw, bool):
+        auto_trigger = auto_trigger_raw
+    elif isinstance(auto_trigger_raw, str):
+        auto_trigger = auto_trigger_raw.lower() in ("true", "yes", "1")
+    elif isinstance(auto_trigger_raw, (int, float)):
+        auto_trigger = bool(auto_trigger_raw)
+
     return Skill(
         name=meta["name"],
         description=meta["description"],
         trigger=meta["trigger"],
         prompt=prompt,
         source=source,
+        auto_trigger=auto_trigger,
     )
 
 
@@ -84,13 +98,25 @@ class SkillRegistry:
         return [s.trigger for s in self.skills.values()]
 
     def _load_from_dir(self, path: str, source: str) -> None:
-        """从目录扫描 .md 文件并加载 Skill。"""
+        """从目录扫描 .md 文件和 SKILL.md 目录型 Skill 并加载。"""
         if not os.path.isdir(path):
             return
         for filename in sorted(os.listdir(path)):
+            filepath = os.path.join(path, filename)
+
+            # 目录型 Skill：子目录包含 SKILL.md
+            if os.path.isdir(filepath):
+                skill_md = os.path.join(filepath, "SKILL.md")
+                if os.path.isfile(skill_md):
+                    skill = _parse_skill_file(skill_md, source)
+                    if skill is not None:
+                        skill = replace(skill, skill_dir=os.path.abspath(filepath))
+                        self.skills[skill.name] = skill
+                continue
+
+            # 单文件 Skill：.md 文件
             if not filename.endswith(".md"):
                 continue
-            filepath = os.path.join(path, filename)
             skill = _parse_skill_file(filepath, source)
             if skill is not None:
                 self.skills[skill.name] = skill

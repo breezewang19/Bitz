@@ -2,7 +2,7 @@
 import pytest
 import tempfile
 import os
-from agent.skills import Skill, SkillRegistry
+from agent.skills import Skill, SkillRegistry, _parse_skill_file
 
 
 class TestSkillDataclass:
@@ -281,3 +281,166 @@ class TestCommandPopupWithSkills:
         from tui.widgets.command_popup import build_commands, BASE_COMMANDS
         commands = build_commands(None)
         assert len(commands) == len(BASE_COMMANDS)
+
+
+class TestDirectoryTypeSkill:
+    def test_load_directory_skill(self, tmp_path):
+        """测试子目录含 SKILL.md 时正确加载"""
+        skill_dir = tmp_path / "skills" / "my-skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: 目录型Skill\ntrigger: /my-skill\n---\n流程内容\n",
+            encoding="utf-8",
+        )
+        registry = SkillRegistry()
+        registry.load_builtin(str(tmp_path / "skills"))
+        skill = registry.get("my-skill")
+        assert skill is not None
+        assert skill.name == "my-skill"
+        assert skill.skill_dir is not None
+        assert "流程内容" in skill.prompt
+
+    def test_directory_skill_with_references(self, tmp_path):
+        """测试目录型 Skill 的 skill_dir 指向正确目录"""
+        skill_dir = tmp_path / "skills" / "admin-review"
+        skill_dir.mkdir(parents=True)
+        refs_dir = skill_dir / "references"
+        refs_dir.mkdir()
+        (refs_dir / "execution-order.yaml").write_text("test: true", encoding="utf-8")
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: admin-review\ndescription: 审查\ntrigger: /admin-review\n---\n审查流程\n",
+            encoding="utf-8",
+        )
+        registry = SkillRegistry()
+        registry.load_builtin(str(tmp_path / "skills"))
+        skill = registry.get("admin-review")
+        assert skill is not None
+        assert skill.skill_dir is not None
+        import os
+        ref_path = os.path.join(skill.skill_dir, "references", "execution-order.yaml")
+        assert os.path.isfile(ref_path)
+
+    def test_mixed_single_and_directory_skills(self, tmp_path):
+        """测试同一目录下单文件和目录型 Skill 共存"""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        # 单文件 Skill
+        (skills_dir / "debug.md").write_text(
+            "---\nname: debug\ndescription: 调试\ntrigger: /debug\n---\n调试流程\n",
+            encoding="utf-8",
+        )
+        # 目录型 Skill
+        dir_skill = skills_dir / "my-skill"
+        dir_skill.mkdir()
+        (dir_skill / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: 目录型\ntrigger: /my-skill\n---\n流程\n",
+            encoding="utf-8",
+        )
+        registry = SkillRegistry()
+        registry.load_builtin(str(skills_dir))
+        debug = registry.get("debug")
+        my_skill = registry.get("my-skill")
+        assert debug is not None
+        assert debug.skill_dir is None
+        assert my_skill is not None
+        assert my_skill.skill_dir is not None
+
+    def test_directory_without_skill_md_ignored(self, tmp_path):
+        """测试子目录不含 SKILL.md 时忽略"""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        sub = skills_dir / "not-a-skill"
+        sub.mkdir()
+        (sub / "notes.txt").write_text("不是 Skill", encoding="utf-8")
+        registry = SkillRegistry()
+        registry.load_builtin(str(skills_dir))
+        assert len(registry.list_all()) == 0
+
+    def test_skill_dir_is_absolute_path(self, tmp_path):
+        """测试 skill_dir 始终为绝对路径"""
+        skill_dir = tmp_path / "skills" / "my-skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: 测试\ntrigger: /my-skill\n---\n流程\n",
+            encoding="utf-8",
+        )
+        registry = SkillRegistry()
+        registry.load_builtin(str(tmp_path / "skills"))
+        skill = registry.get("my-skill")
+        assert skill is not None
+        import os
+        assert os.path.isabs(skill.skill_dir)
+
+
+class TestContextDirectorySkill:
+    def test_get_messages_with_directory_skill_injects_path(self):
+        """测试目录型 Skill 激活时 system 消息包含资源目录路径"""
+        from agent.context import Context
+        ctx = Context(system_prompt="你是 Bitz-Cat")
+        ctx.add_user("你好")
+        skill = Skill(
+            name="admin-review",
+            description="审查",
+            trigger="/admin-review",
+            prompt="审查流程",
+            source="builtin",
+            skill_dir="/abs/path/to/skill",
+        )
+        ctx.set_active_skill(skill)
+        msgs = ctx.get_messages()
+        assert msgs[0]["role"] == "system"
+        assert "当前 Skill: admin-review" in msgs[0]["content"]
+        assert "Skill 资源目录" in msgs[0]["content"]
+        assert "/abs/path/to/skill" in msgs[0]["content"]
+
+    def test_get_messages_with_single_file_skill_no_path_injection(self):
+        """测试单文件 Skill 不注入资源目录路径"""
+        from agent.context import Context
+        ctx = Context(system_prompt="你是 Bitz-Cat")
+        ctx.add_user("你好")
+        skill = Skill(
+            name="review",
+            description="审查",
+            trigger="/review",
+            prompt="审查流程",
+            source="builtin",
+        )
+        ctx.set_active_skill(skill)
+        msgs = ctx.get_messages()
+        assert msgs[0]["role"] == "system"
+        assert "当前 Skill: review" in msgs[0]["content"]
+        assert "Skill 资源目录" not in msgs[0]["content"]
+
+
+class TestAutoTrigger:
+    def test_auto_trigger_default_true(self):
+        """不传 auto_trigger 时默认 True"""
+        skill = Skill(name="test", description="测试", trigger="/test", prompt="流程", source="builtin")
+        assert skill.auto_trigger is True
+
+    def test_auto_trigger_explicit_false(self):
+        """显式设置 auto_trigger=False"""
+        skill = Skill(name="test", description="测试", trigger="/test", prompt="流程", source="builtin", auto_trigger=False)
+        assert skill.auto_trigger is False
+
+    def test_parse_auto_trigger_from_frontmatter(self, tmp_path):
+        """从 frontmatter 解析 auto_trigger: false"""
+        f = tmp_path / "skill.md"
+        f.write_text(
+            "---\nname: heavy\ndescription: 重型\ntrigger: /heavy\nauto_trigger: false\n---\n流程\n",
+            encoding="utf-8",
+        )
+        skill = _parse_skill_file(str(f), "builtin")
+        assert skill is not None
+        assert skill.auto_trigger is False
+
+    def test_parse_auto_trigger_missing_defaults_true(self, tmp_path):
+        """frontmatter 缺少 auto_trigger 时默认 True"""
+        f = tmp_path / "skill.md"
+        f.write_text(
+            "---\nname: light\ndescription: 轻型\ntrigger: /light\n---\n流程\n",
+            encoding="utf-8",
+        )
+        skill = _parse_skill_file(str(f), "builtin")
+        assert skill is not None
+        assert skill.auto_trigger is True
