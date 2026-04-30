@@ -1,13 +1,14 @@
 # tests/test_subagent.py
 """SubAgent 数据类测试"""
 import pytest
-from unittest.mock import MagicMock
+import threading
+from unittest.mock import MagicMock, patch
 from agent.subagent import SubAgentResult, SubAgentSpec
 from agent.loop import Agent
 from agent.context import Context
-from agent.adapter import LLMAdapter
+from agent.adapter import LLMAdapter, LLMError
 from agent.tools import ToolRegistry
-from agent.subagent import SubAgent
+from agent.subagent import SubAgent, run_parallel
 
 
 class TestSubAgentResult:
@@ -149,3 +150,109 @@ class TestSubAgentConstruction:
         assert "bash" in sub._tools.tools
         assert "read_file" in sub._tools.tools
         assert "spawn" not in sub._tools.tools
+
+
+class TestSubAgentRun:
+    @patch("agent.subagent.Agent")
+    def test_run_success(self, MockAgentCls):
+        parent = _make_parent_agent()
+        mock_instance = MockAgentCls.return_value
+        mock_instance.run.return_value = "task completed"
+        mock_instance._step_count = 3
+
+        spec = SubAgentSpec(task="do it")
+        sub = SubAgent(parent, spec)
+        result = sub.run()
+        assert result.success is True
+        assert result.output == "task completed"
+        assert result.steps == 3
+        assert result.elapsed > 0
+
+    @patch("agent.subagent.Agent")
+    def test_run_llm_error(self, MockAgentCls):
+        parent = _make_parent_agent()
+        mock_instance = MockAgentCls.return_value
+        mock_instance.run.side_effect = LLMError("API 超时")
+
+        spec = SubAgentSpec(task="fail")
+        sub = SubAgent(parent, spec)
+        result = sub.run()
+        assert result.success is False
+        assert "API 超时" in result.error
+
+    @patch("agent.subagent.Agent")
+    def test_run_generic_exception(self, MockAgentCls):
+        parent = _make_parent_agent()
+        mock_instance = MockAgentCls.return_value
+        mock_instance.run.side_effect = RuntimeError("unexpected")
+
+        spec = SubAgentSpec(task="crash")
+        sub = SubAgent(parent, spec)
+        result = sub.run()
+        assert result.success is False
+        assert "RuntimeError" in result.error
+
+    @patch("agent.subagent.Agent")
+    def test_on_status_callback(self, MockAgentCls):
+        parent = _make_parent_agent()
+        mock_instance = MockAgentCls.return_value
+        mock_instance.run.return_value = "ok"
+        mock_instance._step_count = 1
+
+        statuses = []
+        def on_status(task_id, status):
+            statuses.append((task_id, status))
+
+        spec = SubAgentSpec(task="test")
+        sub = SubAgent(parent, spec, on_status=on_status)
+        sub.run()
+        status_values = [s[1] for s in statuses]
+        assert "running" in status_values
+        assert "done" in status_values
+
+
+class TestRunParallel:
+    @patch("agent.subagent.SubAgent")
+    def test_parallel_results_ordered(self, MockSubAgentCls):
+        parent = MagicMock()
+        specs = [SubAgentSpec(task=f"task {i}") for i in range(3)]
+
+        mock_results = [
+            SubAgentResult(success=True, output=f"result {i}", steps=i + 1, elapsed=1.0)
+            for i in range(3)
+        ]
+        MockSubAgentCls.return_value.run.side_effect = mock_results
+
+        results = run_parallel(specs, parent)
+        assert len(results) == 3
+        for i, r in enumerate(results):
+            assert r.output == f"result {i}"
+
+    @patch("agent.subagent.SubAgent")
+    def test_parallel_max_workers(self, MockSubAgentCls):
+        parent = MagicMock()
+        specs = [SubAgentSpec(task=f"task {i}") for i in range(5)]
+
+        mock_results = [
+            SubAgentResult(success=True, output=f"result {i}", steps=1, elapsed=0.5)
+            for i in range(5)
+        ]
+        MockSubAgentCls.return_value.run.side_effect = mock_results
+
+        results = run_parallel(specs, parent, max_workers=2)
+        assert len(results) == 5
+
+    @patch("agent.subagent.SubAgent")
+    def test_parallel_mixed_success_failure(self, MockSubAgentCls):
+        parent = MagicMock()
+        specs = [SubAgentSpec(task="ok"), SubAgentSpec(task="fail")]
+
+        mock_results = [
+            SubAgentResult(success=True, output="ok", steps=1, elapsed=1.0),
+            SubAgentResult(success=False, output="", error="timeout", steps=0, elapsed=2.0),
+        ]
+        MockSubAgentCls.return_value.run.side_effect = mock_results
+
+        results = run_parallel(specs, parent)
+        assert results[0].success is True
+        assert results[1].success is False
