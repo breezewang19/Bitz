@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 # 基础命令（不含 Skill triggers）
 BASE_COMMANDS = [
     ("/help", "显示帮助信息"),
+    ("/new", "开始新对话"),
     ("/clear", "清屏"),
     ("/compact", "压缩上下文"),
     ("/theme [name]", "切换主题"),

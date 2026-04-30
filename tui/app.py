@@ -278,6 +278,7 @@ class BitzApp(App):
                 "| 命令 | 说明 |\n"
                 "|------|------|\n"
                 "| `/help` | 显示此帮助信息 |\n"
+                "| `/new` | 开始新对话 |\n"
                 "| `/clear` | 清屏 |\n"
                 "| `/compact` | 压缩上下文 |\n"
                 "| `/theme [name]` | 切换主题（无参数时循环切换）|\n"
@@ -295,6 +296,8 @@ class BitzApp(App):
                 for s in skills:
                     help_text += f"- {s.trigger} — {s.description}\n"
             chat.add_message("assistant", help_text)
+        elif command == "new":
+            self.action_new_conversation()
         elif command == "clear":
             self.action_clear_screen()
         elif command == "compact":
@@ -772,6 +775,26 @@ class BitzApp(App):
         from tui.widgets.tool_card import ToolCard
         for widget_type in (UserMessage, AssistantMessage, ToolCard, TurnTiming):
             chat.query(widget_type).remove()
+
+    def action_new_conversation(self) -> None:
+        """清空对话和上下文，开始新对话。"""
+        chat = self.query_one(ChatLog)
+        # 清空所有聊天内容
+        for child in list(chat.children):
+            child.remove()
+        # 清空 Agent 上下文
+        self._agent.context.messages.clear()
+        self._agent.context.clear_active_skill()
+        # 重置计数器
+        self._step_count = 0
+        self._total_input_tokens = 0
+        self._total_output_tokens = 0
+        status = self.query_one(StatusBar)
+        status.update_steps(0)
+        status.update_tokens(0, 0)
+        # 重新挂载 Banner
+        model_name = self._agent.llm_adapter.model
+        chat.mount(BannerWidget(model_name=model_name))
 
     def action_quit(self) -> None:
         if self._exiting:
