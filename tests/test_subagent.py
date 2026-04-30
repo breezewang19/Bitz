@@ -1,7 +1,12 @@
 # tests/test_subagent.py
 """SubAgent 数据类测试"""
 import pytest
+from unittest.mock import MagicMock
 from agent.subagent import SubAgentResult, SubAgentSpec
+from agent.loop import Agent
+from agent.context import Context
+from agent.adapter import LLMAdapter
+from agent.tools import ToolRegistry
 
 
 class TestSubAgentResult:
@@ -42,3 +47,20 @@ class TestSubAgentSpec:
         assert spec.context_hint == "Rule: check X"
         assert spec.max_steps == 5
         assert spec.model == "claude-haiku-4-5-20251001"
+
+
+class TestAgentAutoConfirm:
+    def test_auto_confirm_default_false(self):
+        llm = MagicMock(spec=LLMAdapter)
+        ctx = Context(system_prompt="test")
+        tools = ToolRegistry()
+        agent = Agent(llm_adapter=llm, tools=tools, context=ctx)
+        assert agent.auto_confirm is False
+
+    def test_auto_confirm_can_set_true(self):
+        llm = MagicMock(spec=LLMAdapter)
+        ctx = Context(system_prompt="test")
+        tools = ToolRegistry()
+        agent = Agent(llm_adapter=llm, tools=tools, context=ctx)
+        agent.auto_confirm = True
+        assert agent.auto_confirm is True

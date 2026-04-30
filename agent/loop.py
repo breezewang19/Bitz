@@ -16,9 +16,10 @@ class Agent:
         self.max_steps = max_steps
         self._pending_confirm: tuple = None  # (tool_id, tool_name, tool_args, result)
         self._confirmed_results: list = []   # 已确认但未写入上下文的工具结果
-        self._on_text: callable = None  # 中间文字输出回调（由 TUI 设置）
+        self._on_text: callable = None
+        self.auto_confirm: bool = False  # 子 agent 自动确认  # 中间文字输出回调（由 TUI 设置）
 
-    def run(self, user_input: str, cancel_event: threading.Event = None,
+    def run(self, user_input: str | None = None, cancel_event: threading.Event = None,
             confirmed_tools: set = None, skip_add_user: bool = False) -> str:
         """核心循环
 
@@ -28,7 +29,7 @@ class Agent:
             confirmed_tools: 已确认的工具调用 ID 集合，用于绕过确认继续执行
             skip_add_user: 跳过添加用户消息（用于确认后继续执行）
         """
-        if not skip_add_user:
+        if not skip_add_user and user_input is not None:
             self.context.add_user(user_input)
         if confirmed_tools is None:
             confirmed_tools = set()
@@ -71,7 +72,12 @@ class Agent:
                     result = self.tools.execute(tool_name, tool_args, confirmed=confirmed, tool_id=tool_id)
 
                     if result.startswith("[CONFIRM_REQUIRED]") and not confirmed:
-                        pending_tools.append((tool_id, tool_name, tool_args, result))
+                        if self.auto_confirm:
+                            # 子 agent 自动确认：重新执行并标记为已确认
+                            result = self.tools.execute(tool_name, tool_args, confirmed=True, tool_id=tool_id)
+                            confirmed_results.append((tool_id, tool_name, tool_args, result))
+                        else:
+                            pending_tools.append((tool_id, tool_name, tool_args, result))
                     else:
                         confirmed_results.append((tool_id, tool_name, tool_args, result))
 
