@@ -70,8 +70,12 @@ class ToolRegistry:
         )
 
     def execute(self, name: str, args: dict, confirmed: bool = False,
-                tool_id: str = None) -> str:
+                tool_id: str = None, agent=None) -> str:
         """执行工具，返回结果字符串"""
+        # spawn 工具特殊处理
+        if name == "spawn":
+            return self._execute_spawn(args, agent)
+
         if name not in self.tools:
             return f"Error: Unknown tool '{name}'"
 
@@ -123,3 +127,43 @@ class ToolRegistry:
             }
             for t in self.tools.values()
         ]
+
+    def _execute_spawn(self, args: dict, agent=None) -> str:
+        """执行 spawn 工具"""
+        from agent.subagent import SubAgent, SubAgentSpec, run_parallel
+
+        if agent is None:
+            return "错误：spawn 需要主 Agent 引用"
+
+        task = args.get("task")
+        tasks = args.get("tasks", [])
+        context_hint = args.get("context_hint", "")
+        max_steps = args.get("max_steps", 10)
+        max_workers = args.get("max_workers", 3)
+
+        if not task and not tasks:
+            return "错误：必须提供 task 或 tasks 参数"
+
+        # 单任务
+        if task:
+            spec = SubAgentSpec(task=task, context_hint=context_hint, max_steps=max_steps)
+            sub = SubAgent(agent, spec)
+            result = sub.run()
+            if result.success:
+                return f"子 Agent 完成（{result.steps} 步，{result.elapsed:.1f}s）:\n{result.output}"
+            else:
+                return f"子 Agent 失败: {result.error}"
+
+        # 并发多任务
+        specs = [SubAgentSpec(task=t, context_hint=context_hint, max_steps=max_steps) for t in tasks]
+        results = run_parallel(specs, agent, max_workers=max_workers)
+
+        output_parts = []
+        for i, r in enumerate(results):
+            if r.success:
+                status = f"✓ 完成 | {r.steps} 步 | {r.elapsed:.1f}s"
+            else:
+                status = f"✗ 失败: {r.error}"
+            output_parts.append(f"### 任务 {i + 1}: {specs[i].task[:50]}\n{status}\n{r.output}")
+
+        return "\n\n---\n\n".join(output_parts)

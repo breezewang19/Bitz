@@ -9,6 +9,40 @@ from agent.tools import ToolRegistry
 MAX_OUTPUT = 30000
 HALF_OUTPUT = MAX_OUTPUT // 2
 
+# spawn 工具定义（供 ToolRegistry._execute_spawn 使用）
+SPAWN_TOOL_DEF = {
+    "name": "spawn",
+    "description": "创建子 Agent 执行任务。支持单个任务或并发多个任务。子 Agent 拥有独立上下文，不会污染主对话。适用于：并行审查多个检查点、独立执行子任务、隔离复杂操作。",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "task": {
+                "type": "string",
+                "description": "单个任务描述。与 tasks 二选一。",
+            },
+            "tasks": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "多个任务描述列表，将并发执行。与 task 二选一。",
+            },
+            "context_hint": {
+                "type": "string",
+                "description": "附加上下文信息，会随任务一起传递给子 Agent。",
+            },
+            "max_steps": {
+                "type": "integer",
+                "description": "每个子 Agent 最大执行步数，默认 10。",
+                "default": 10,
+            },
+            "max_workers": {
+                "type": "integer",
+                "description": "最大并发数，默认 3。",
+                "default": 3,
+            },
+        },
+    },
+}
+
 
 def _truncate(text: str, limit: int = MAX_OUTPUT) -> str:
     """截断过长文本，保留首尾，中间省略"""
@@ -250,6 +284,14 @@ def create_tools() -> ToolRegistry:
             "required": ["url"]
         },
         handler=fetch_handler
+    )
+
+    # spawn 工具（handler 为占位，实际执行在 ToolRegistry._execute_spawn）
+    tools.register(
+        name=SPAWN_TOOL_DEF["name"],
+        description=SPAWN_TOOL_DEF["description"],
+        input_schema=SPAWN_TOOL_DEF["input_schema"],
+        handler=lambda **kwargs: "",  # 占位 handler，不会被调用
     )
 
     return tools

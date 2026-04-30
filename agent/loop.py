@@ -71,7 +71,7 @@ class Agent:
                     tool_id = tool_use["id"]
 
                     confirmed = tool_id in confirmed_tools
-                    result = self.tools.execute(tool_name, tool_args, confirmed=confirmed, tool_id=tool_id)
+                    result = self.tools.execute(tool_name, tool_args, confirmed=confirmed, tool_id=tool_id, agent=self)
 
                     if result.startswith("[CONFIRM_REQUIRED]") and not confirmed:
                         if self.auto_confirm:

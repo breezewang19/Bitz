@@ -256,3 +256,64 @@ class TestRunParallel:
         results = run_parallel(specs, parent)
         assert results[0].success is True
         assert results[1].success is False
+
+
+from agent.builtin_tools import create_tools, SPAWN_TOOL_DEF
+
+
+class TestSpawnToolDefinition:
+    def test_spawn_tool_def_exists(self):
+        assert SPAWN_TOOL_DEF is not None
+        assert SPAWN_TOOL_DEF["name"] == "spawn"
+
+    def test_spawn_schema_has_required_fields(self):
+        props = SPAWN_TOOL_DEF["input_schema"]["properties"]
+        assert "task" in props
+        assert "tasks" in props
+        assert "context_hint" in props
+        assert "max_steps" in props
+        assert "max_workers" in props
+
+
+class TestSpawnExecution:
+    @patch("agent.subagent.SubAgent")
+    def test_single_task(self, MockSubAgentCls):
+        tools = create_tools()
+
+        mock_result = SubAgentResult(success=True, output="done", steps=3, elapsed=5.0)
+        MockSubAgentCls.return_value.run.return_value = mock_result
+
+        parent = MagicMock()
+        result = tools.execute("spawn", {"task": "review code"}, agent=parent)
+        assert "完成" in result
+        assert "3 步" in result
+
+    @patch("agent.subagent.run_parallel")
+    def test_parallel_tasks(self, mock_parallel):
+        tools = create_tools()
+
+        mock_results = [
+            SubAgentResult(success=True, output="r1", steps=2, elapsed=3.0),
+            SubAgentResult(success=True, output="r2", steps=4, elapsed=5.0),
+        ]
+        mock_parallel.return_value = mock_results
+
+        parent = MagicMock()
+        result = tools.execute(
+            "spawn",
+            {"tasks": ["task1", "task2"], "max_workers": 2},
+            agent=parent,
+        )
+        assert "任务 1" in result
+        assert "任务 2" in result
+
+    def test_spawn_without_agent(self):
+        tools = create_tools()
+        result = tools.execute("spawn", {"task": "test"})
+        assert "错误" in result
+
+    def test_spawn_without_task_or_tasks(self):
+        tools = create_tools()
+        parent = MagicMock()
+        result = tools.execute("spawn", {}, agent=parent)
+        assert "错误" in result
