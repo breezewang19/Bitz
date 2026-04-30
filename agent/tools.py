@@ -70,11 +70,11 @@ class ToolRegistry:
         )
 
     def execute(self, name: str, args: dict, confirmed: bool = False,
-                tool_id: str = None, agent=None) -> str:
+                tool_id: str = None, agent=None, on_event=None) -> str:
         """执行工具，返回结果字符串"""
         # spawn 工具特殊处理
         if name == "spawn":
-            return self._execute_spawn(args, agent)
+            return self._execute_spawn(args, agent, on_event=on_event)
 
         if name not in self.tools:
             return f"Error: Unknown tool '{name}'"
@@ -128,7 +128,7 @@ class ToolRegistry:
             for t in self.tools.values()
         ]
 
-    def _execute_spawn(self, args: dict, agent=None) -> str:
+    def _execute_spawn(self, args: dict, agent=None, on_event=None) -> str:
         """执行 spawn 工具"""
         from agent.subagent import SubAgent, SubAgentSpec, run_parallel
 
@@ -147,7 +147,9 @@ class ToolRegistry:
         # 单任务
         if task:
             spec = SubAgentSpec(task=task, context_hint=context_hint, max_steps=max_steps)
-            sub = SubAgent(agent, spec)
+            sub = SubAgent(agent, spec, on_event=on_event, task_index=0)
+            if on_event:
+                on_event("task_start", 0, task_name=task[:50])
             result = sub.run()
             if result.success:
                 return f"子 Agent 完成（{result.steps} 步，{result.elapsed:.1f}s）:\n{result.output}"
@@ -156,7 +158,10 @@ class ToolRegistry:
 
         # 并发多任务
         specs = [SubAgentSpec(task=t, context_hint=context_hint, max_steps=max_steps) for t in tasks]
-        results = run_parallel(specs, agent, max_workers=max_workers)
+        if on_event:
+            for i, spec in enumerate(specs):
+                on_event("task_start", i, task_name=spec.task[:50])
+        results = run_parallel(specs, agent, on_event=on_event, max_workers=max_workers)
 
         output_parts = []
         for i, r in enumerate(results):

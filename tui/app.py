@@ -7,6 +7,7 @@ import time
 from typing import TYPE_CHECKING
 
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.widgets import Static
 from textual.events import Key
 
@@ -30,6 +31,8 @@ class BitzApp(App):
 
     BINDINGS = [
         ("ctrl+l", "clear_screen", "Clear"),
+        Binding("ctrl+c", "copy_text", "Copy", priority=True),
+        ("ctrl+q", "quit", "Quit"),
     ]
 
     def __init__(self, agent: Agent, model_store=None, skill_registry=None, **kwargs) -> None:
@@ -80,8 +83,8 @@ class BitzApp(App):
         original = self._original_execute
         app = self
 
-        def logged_execute(name, args, confirmed=False, tool_id=None, agent=None):
-            # spawn 工具特殊处理：显示 SubAgentCard
+        def logged_execute(name, args, confirmed=False, tool_id=None, agent=None, on_event=None):
+            # spawn 工具特殊处理：显示 SubAgentCard + 实时日志
             if name == "spawn":
                 tasks = args.get("tasks", []) if isinstance(args, dict) else []
                 task_desc = (args.get("task", "") if isinstance(args, dict) else "") or f"{len(tasks)} 个并发任务"
@@ -90,7 +93,30 @@ class BitzApp(App):
                 chat = app.query_one(ChatLog)
                 app.call_from_thread(chat.mount, card)
                 app._subagent_card = card
-                result = original(name, args, confirmed=confirmed, tool_id=tool_id, agent=agent)
+
+                def on_event(event_type, task_index, **kwargs):
+                    """桥接 SubAgent 事件到 SubAgentCard"""
+                    try:
+                        if event_type == "task_start":
+                            app.call_from_thread(card.add_task, task_index, kwargs.get("task_name", f"任务{task_index + 1}"))
+                        elif event_type == "text":
+                            line = f"  {kwargs['text'][:80]}"
+                            app.call_from_thread(card.append_log, task_index, line)
+                        elif event_type == "tool_start":
+                            line = f"⟳ {kwargs['tool_name']}: {kwargs.get('args_summary', '')[:40]}"
+                            app.call_from_thread(card.append_log, task_index, line)
+                        elif event_type == "tool_end":
+                            pass  # 工具结束不单独显示，省空间
+                        elif event_type == "done":
+                            app.call_from_thread(
+                                card.complete_task, task_index,
+                                kwargs.get("success", False), kwargs.get("steps", 0),
+                                kwargs.get("elapsed", 0.0), kwargs.get("error", "")
+                            )
+                    except Exception:
+                        pass
+
+                result = original(name, args, confirmed=confirmed, tool_id=tool_id, agent=agent, on_event=on_event)
                 app._subagent_card = None
                 return result
 
@@ -115,7 +141,7 @@ class BitzApp(App):
                         except Exception:
                             pass
 
-                result = original(name, args, confirmed=confirmed, tool_id=tool_id, agent=agent)
+                result = original(name, args, confirmed=confirmed, tool_id=tool_id, agent=agent, on_event=None)
                 is_error = result.startswith("Error") or result.startswith("[CONFIRM_REQUIRED]")
 
                 # 生成 diff
@@ -494,17 +520,41 @@ class BitzApp(App):
             self._cancel_event.set()
             self.query_one(ThinkingIndicator).set_canceling()
             event.prevent_default()
-            return
 
-        # Ctrl+C: cancel if running, quit if idle
-        if event.key == "ctrl+c":
-            if bar._busy:
-                self._cancel_event.set()
-                self.query_one(ThinkingIndicator).set_canceling()
-                event.prevent_default()
-            else:
-                self.action_quit()
-                event.prevent_default()
+    def copy_to_clipboard(self, text: str) -> None:
+        """复制到剪贴板（Windows 用 Win32 API，其他系统用 OSC 52）"""
+        if os.name == "nt":
+            try:
+                import ctypes
+                from ctypes import wintypes
+                CF_UNICODETEXT = 13
+                kernel32 = ctypes.windll.kernel32
+                user32 = ctypes.windll.user32
+                kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+                kernel32.GlobalLock.restype = wintypes.c_void_p
+                buf = (len(text) + 1) * 2
+                h = kernel32.GlobalAlloc(0x0042, buf)
+                p = kernel32.GlobalLock(h)
+                ctypes.cdll.msvcrt.wcscpy_s(wintypes.LPWSTR(p), len(text) + 1, text)
+                kernel32.GlobalUnlock(h)
+                user32.OpenClipboard(0)
+                user32.EmptyClipboard()
+                user32.SetClipboardData(CF_UNICODETEXT, h)
+                user32.CloseClipboard()
+                self._clipboard = text
+                return
+            except Exception:
+                pass
+        super().copy_to_clipboard(text)
+
+    def action_copy_text(self) -> None:
+        """Ctrl+C: 复制选中文本到剪贴板，不取消运行"""
+        selected = self.screen.get_selected_text()
+        if selected:
+            self.copy_to_clipboard(selected)
+            self.notify("已复制到剪贴板", severity="information", timeout=2)
+        else:
+            self.notify("按 Ctrl+Q 退出", severity="information", timeout=2)
 
     def _resolve_confirm(self, approved: bool) -> None:
         """Resolve the confirm future and clean up the prompt."""

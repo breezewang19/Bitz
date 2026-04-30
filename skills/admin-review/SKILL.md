@@ -36,15 +36,21 @@ auto_trigger: false
 
 ### 阶段3：逐步审查
 
-按 `execution-order.yaml` 定义的顺序，**逐环节、逐审查点**执行：
+按 `execution-order.yaml` 定义的顺序执行审查。**支持并发审查**：
 
-1. 使用 read_file 读取当前审查点的规则 YAML 文件
-2. 按规则中的 steps 逐步骤检查：
-   - 使用 read_file 读取对应文书内容
-   - 根据规则的 judgment 字段判断合规/不合规
-   - 引用规则的 legal_basis 字段作为法律依据
-3. 输出当前审查点的结论，继续下一个审查点
-4. 同一环节内的审查点按顺序执行，环节之间按 execution-order 定义的顺序执行
+1. 使用 read_file 读取所有审查点的规则 YAML 文件
+2. 使用 spawn 工具并发执行审查：
+
+```
+spawn(tasks=[
+  "审查：{审查点1名称}。规则：{规则1的steps和judgment内容}。请对照相关文书内容，按步骤检查，给出判定（不存在问题/存在问题/缺少文书材料）和理由。",
+  "审查：{审查点2名称}。规则：{规则2的steps和judgment内容}。请对照相关文书内容，按步骤检查，给出判定（不存在问题/存在问题/缺少文书材料）和理由。",
+  ...
+], context_hint="被审查文书清单：{文件名→类型映射}", max_steps=5, max_workers=3)
+```
+
+3. 汇总所有子 Agent 的审查结果
+4. 同一环节内的审查点可并发执行，环节之间按 execution-order 定义的顺序执行
 
 **审查约束：**
 1. 严格遵循steps中的每一步action描述执行审查

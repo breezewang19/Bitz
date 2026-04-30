@@ -71,12 +71,12 @@ class Agent:
                     tool_id = tool_use["id"]
 
                     confirmed = tool_id in confirmed_tools
-                    result = self.tools.execute(tool_name, tool_args, confirmed=confirmed, tool_id=tool_id, agent=self)
+                    result = self.tools.execute(tool_name, tool_args, confirmed=confirmed, tool_id=tool_id, agent=self, on_event=None)
 
                     if result.startswith("[CONFIRM_REQUIRED]") and not confirmed:
                         if self.auto_confirm:
                             # 子 agent 自动确认：重新执行并标记为已确认
-                            result = self.tools.execute(tool_name, tool_args, confirmed=True, tool_id=tool_id)
+                            result = self.tools.execute(tool_name, tool_args, confirmed=True, tool_id=tool_id, on_event=None)
                             confirmed_results.append((tool_id, tool_name, tool_args, result))
                         else:
                             pending_tools.append((tool_id, tool_name, tool_args, result))

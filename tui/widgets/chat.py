@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from textual.widgets import Static
+from textual.widgets import Static, Collapsible
 from textual.widgets import Markdown as MarkdownWidget
 from textual.message import Message
 from textual.containers import VerticalScroll
@@ -8,6 +8,7 @@ from rich.text import Text
 
 from tui.theme import COLORS
 from tui.widgets.tool_card import ToolCard
+from tui.widgets.copy_button import CopyButton
 
 
 class UserMessage(Static):
@@ -40,6 +41,15 @@ class AssistantMessage(Static):
         padding: 0 1;
         height: auto;
     }
+    AssistantMessage Markdown {
+        height: auto;
+        width: 100%;
+    }
+    AssistantMessage CopyButton {
+        dock: right;
+        height: 1;
+        width: 3;
+    }
     """
 
     def __init__(self, content: str) -> None:
@@ -48,6 +58,12 @@ class AssistantMessage(Static):
 
     def compose(self):
         yield MarkdownWidget(self._content)
+        yield CopyButton(self._content)
+
+    def on_copy_button_copied(self, event: CopyButton.Copied) -> None:
+        event.stop()
+        self.app.copy_to_clipboard(event.text)
+        self.app.notify("已复制到剪贴板", severity="information", timeout=2)
 
     def update_content(self, text: str) -> None:
         """更新 Markdown 内容。"""
@@ -55,6 +71,11 @@ class AssistantMessage(Static):
         try:
             md = self.query_one(MarkdownWidget)
             md.update(text)
+        except Exception:
+            pass
+        try:
+            btn = self.query_one(CopyButton)
+            btn._copy_text = text
         except Exception:
             pass
 
@@ -229,7 +250,7 @@ class ChatLog(VerticalScroll):
 
 
 class SubAgentCard(Static):
-    """子 Agent 状态卡片"""
+    """子 Agent 状态卡片，内嵌滚动日志"""
     DEFAULT_CSS = """
     SubAgentCard {
         background: #1a1a2e;
@@ -238,31 +259,85 @@ class SubAgentCard(Static):
         padding: 0 1;
         height: auto;
     }
+    SubAgentCard Collapsible {
+        width: 1fr;
+    }
+    SubAgentCard .subagent-header {
+        color: #8be9fd;
+        padding: 0 0 0 0;
+    }
+    SubAgentCard .subagent-log {
+        color: $text-muted;
+        max-height: 12;
+        padding: 0 1;
+    }
     """
 
     def __init__(self, task: str, count: int = 1) -> None:
         super().__init__()
-        self._task = task
+        self._task_desc = task
         self._count = count
-        self._results: list = []
+        self._task_summaries: list[dict] = []  # [{name, status, steps, elapsed, error}]
+        self._task_logs: dict[int, Static] = {}  # task_index → log Static
+        self._task_collapse: dict[int, Collapsible] = {}  # task_index → Collapsible
+        self._header: Static | None = None
         self._done = 0
 
-    def render(self) -> Text:
-        if self._results:
-            parts = [Text(f"SubAgent ({self._done}/{self._count}): ", style=COLORS["tool"])]
-            for i, r in enumerate(self._results):
-                if r.success:
-                    parts.append(Text(f"\n  ✓ 任务{i + 1}: {r.steps}步 {r.elapsed:.1f}s", style=COLORS["user"]))
-                else:
-                    parts.append(Text(f"\n  ✗ 任务{i + 1}: {r.error}", style=COLORS["error"]))
-            return Text.assemble(*parts)
-        else:
-            return Text.assemble(
-                Text(f"SubAgent (0/{self._count}): ", style=COLORS["tool"]),
-                Text("Running...", style=COLORS["thinking"]),
-            )
+    def compose(self):
+        self._header = Static(self._render_header(), classes="subagent-header")
+        yield self._header
 
+    def _render_header(self) -> Text:
+        done = sum(1 for t in self._task_summaries if t["status"] == "done")
+        return Text.assemble(
+            Text(f"SubAgent ({done}/{self._count}): ", style=COLORS["tool"]),
+            Text(self._task_desc, style=COLORS["muted"]),
+        )
+
+    def add_task(self, task_index: int, task_name: str) -> None:
+        """开始一个新任务，创建其 Collapsible + log 区域"""
+        log_widget = Static("", classes="subagent-log")
+        collapse = Collapsible(log_widget, title=f"◌ {task_name}", collapsed=False)
+        self._task_logs[task_index] = log_widget
+        self._task_collapse[task_index] = collapse
+        self._task_summaries.append({"name": task_name, "status": "running"})
+        self.mount(collapse)
+
+    def append_log(self, task_index: int, line: str) -> None:
+        """追加一行日志到指定任务的 log 区域"""
+        if task_index in self._task_logs:
+            log = self._task_logs[task_index]
+            current = getattr(log, '_content', '') or ''
+            # _content might be a string or Rich Text; handle both
+            if isinstance(current, str):
+                new_content = current + "\n" + line if current else line
+            else:
+                new_content = line  # fallback
+            log.update(new_content)
+
+    def complete_task(self, task_index: int, success: bool, steps: int, elapsed: float, error: str = "") -> None:
+        """标记任务完成，折叠其日志，更新 header"""
+        if task_index < len(self._task_summaries):
+            self._task_summaries[task_index]["status"] = "done"
+            self._done += 1
+
+        if task_index in self._task_collapse:
+            icon = "✓" if success else "✗"
+            if success:
+                summary = f"{steps}步 {elapsed:.1f}s"
+                title = f"{icon} {self._task_summaries[task_index]['name']}  {summary}"
+            else:
+                title = f"{icon} {self._task_summaries[task_index]['name']}  {error}"
+            self._task_collapse[task_index].title = title
+            self._task_collapse[task_index].collapsed = True  # 完成后折叠
+
+        if self._header is not None:
+            self._header.update(self._render_header())
+
+    # Keep backward compatibility: add_result still works for old code
     def add_result(self, result) -> None:
-        self._results.append(result)
-        self._done += 1
-        self.refresh()
+        """兼容旧接口：直接添加完成结果"""
+        idx = len(self._task_summaries)
+        task_name = f"任务{idx + 1}"
+        self.add_task(idx, task_name)
+        self.complete_task(idx, success=result.success, steps=result.steps, elapsed=result.elapsed, error=result.error or "")

@@ -5,6 +5,7 @@ from rich.text import Text
 from rich.syntax import Syntax
 
 from tui.theme import COLORS
+from tui.widgets.copy_button import CopyButton
 
 
 class ToolCard(Static):
@@ -26,6 +27,12 @@ class ToolCard(Static):
         max-height: 15;
         padding: 0 1;
     }
+
+    ToolCard CopyButton {
+        dock: right;
+        height: 1;
+        width: 3;
+    }
     """
 
     def __init__(self, tool_name: str, args_summary: str = "") -> None:
@@ -38,6 +45,7 @@ class ToolCard(Static):
         self._output_widget: Static | None = None
 
     def compose(self):
+        yield CopyButton(self._args_summary)
         label = self._make_label()
         self._output_widget = Static("", classes="tool-output")
         self._collapsible = Collapsible(
@@ -46,6 +54,11 @@ class ToolCard(Static):
             collapsed=False,  # 运行中默认展开
         )
         yield self._collapsible
+
+    def on_copy_button_copied(self, event: CopyButton.Copied) -> None:
+        event.stop()
+        self.app.copy_to_clipboard(event.text)
+        self.app.notify("已复制到剪贴板", severity="information", timeout=2)
 
     def _make_label(self) -> str:
         icons = {"running": "⟳", "success": "✓", "error": "✗"}

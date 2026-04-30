@@ -163,9 +163,11 @@ async def test_subagent_card_running():
         chat = app.query_one(ChatLog)
         chat.mount(card)
         await pilot.pause()
-        rendered = card.render()
+        # compose mode: header should exist
+        from textual.widgets import Static
+        header = card.query_one(".subagent-header", Static)
+        rendered = header.render()
         assert "0/3" in rendered.plain
-        assert "Running" in rendered.plain
 
 
 @pytest.mark.asyncio
@@ -182,7 +184,73 @@ async def test_subagent_card_with_results():
         card.add_result(SubAgentResult(success=False, output="", error="timeout", steps=0, elapsed=2.0))
         await pilot.pause()
 
-        rendered = card.render()
+        from textual.widgets import Static
+        header = card.query_one(".subagent-header", Static)
+        rendered = header.render()
         assert "2/3" in rendered.plain
-        assert "✓" in rendered.plain
-        assert "✗" in rendered.plain
+
+
+@pytest.mark.asyncio
+async def test_subagent_card_add_task():
+    app = ChatTestApp()
+    async with app.run_test() as pilot:
+        card = SubAgentCard(task="review", count=2)
+        chat = app.query_one(ChatLog)
+        chat.mount(card)
+        await pilot.pause()
+
+        card.add_task(0, "审查程序合法性")
+        card.add_task(1, "审查证据关联性")
+        await pilot.pause()
+
+        from textual.widgets import Collapsible
+        collapsibles = card.query(Collapsible)
+        assert len(collapsibles) == 2
+
+
+@pytest.mark.asyncio
+async def test_subagent_card_append_log():
+    app = ChatTestApp()
+    async with app.run_test() as pilot:
+        card = SubAgentCard(task="review", count=1)
+        chat = app.query_one(ChatLog)
+        chat.mount(card)
+        await pilot.pause()
+
+        card.add_task(0, "审查程序合法性")
+        await pilot.pause()
+
+        card.append_log(0, "⟳ read_file: rules/...")
+        card.append_log(0, "  检查传唤证编号...")
+        await pilot.pause()
+
+        from textual.widgets import Static
+        log_widget = card.query_one(".subagent-log", Static)
+        rendered = log_widget.render()
+        assert "read_file" in rendered.plain
+
+
+@pytest.mark.asyncio
+async def test_subagent_card_complete_task():
+    app = ChatTestApp()
+    async with app.run_test() as pilot:
+        card = SubAgentCard(task="review", count=1)
+        chat = app.query_one(ChatLog)
+        chat.mount(card)
+        await pilot.pause()
+
+        card.add_task(0, "审查程序合法性")
+        await pilot.pause()
+
+        card.complete_task(0, success=True, steps=5, elapsed=12.3)
+        await pilot.pause()
+
+        from textual.widgets import Collapsible, Static
+        collapse = card.query(Collapsible).first()
+        assert "✓" in collapse.title
+        assert "5步" in collapse.title
+        assert collapse.collapsed is True
+
+        header = card.query_one(".subagent-header", Static)
+        rendered = header.render()
+        assert "1/1" in rendered.plain

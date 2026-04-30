@@ -1,9 +1,18 @@
 import os
+import signal
 import sys
 import argparse
 
 
 def main():
+    # Windows: 禁用 Ctrl+C 作为控制信号，让它作为按键事件传递给 Textual
+    # 这样 Textual 的按键绑定系统可以处理 Ctrl+C（复制选中文本）
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleCtrlHandler(None, True)
+    else:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+
     parser = argparse.ArgumentParser(description="Bitz AI Agent TUI")
     parser.add_argument("--legacy", action="store_true", help="Use legacy TUI (pure ANSI)")
     args, remaining = parser.parse_known_args()

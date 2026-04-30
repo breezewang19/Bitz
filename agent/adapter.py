@@ -16,7 +16,12 @@ class LLMResponse:
 
 
 class LLMError(Exception):
-    """LLM 请求错误"""
+    """LLM 请求错误（不可重试）"""
+    pass
+
+
+class RetryableError(Exception):
+    """可重试的 API 错误（超时、限流、服务端错误等）"""
     pass
 
 
@@ -41,40 +46,48 @@ class LLMAdapter:
         """发送请求到 LLM（Anthropic 协议），带重试"""
         if cancel_event and cancel_event.is_set():
             raise LLMError("已中断")
-        last_error = None
         for attempt in range(max_retries):
             try:
                 return self._chat_once(messages, tools, cancel_event)
             except LLMError:
-                raise
+                raise  # 不可重试：用户中断等
+            except RetryableError as e:
+                # 可重试：超时、SDK 限流/5xx/连接错误
+                if attempt < max_retries - 1:
+                    if self._on_retry:
+                        try:
+                            self._on_retry(str(e).strip(), attempt + 1, max_retries)
+                        except Exception:
+                            pass
+                    base_wait = 2 ** (attempt + 1)
+                    jitter = base_wait * random.uniform(-0.2, 0.2)
+                    wait = max(1, base_wait + jitter)
+                    self._cancel_aware_sleep(wait, cancel_event)
+                    continue
+                raise LLMError(f"重试耗尽 ({max_retries} 次): {e}") from e
             except Exception as e:
-                last_error = e
-                import anthropic  # 延迟导入
-                # 用 hasattr 兼容不同版本 anthropic SDK
-                retryable = False
-                for cls_name in ('OverloadedError', 'RateLimitError', 'APITimeoutError'):
-                    cls = getattr(anthropic, cls_name, None)
-                    if cls and isinstance(e, cls):
-                        retryable = True
-                if isinstance(e, (ConnectionError, TimeoutError, OSError)):
-                    retryable = True
+                # 其他异常：检查是否为可重试的 anthropic SDK 错误
+                import anthropic
+                retryable = isinstance(e, (
+                    anthropic.RateLimitError,
+                    anthropic.InternalServerError,
+                    anthropic.APIConnectionError,
+                    anthropic.APITimeoutError,
+                ))
                 # httpx HTTPStatusError 429/5xx 重试
                 import httpx
                 if isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (429, 500, 502, 503, 504):
                     retryable = True
                 if retryable and attempt < max_retries - 1:
-                    # 通知 UI 正在重试
                     if self._on_retry:
                         err_type = type(e).__name__
                         try:
                             self._on_retry(f"{err_type}: {str(e).strip()}", attempt + 1, max_retries)
                         except Exception:
                             pass
-                    # exponential backoff: 2s, 4s, 8s, 16s, 32s + 20% jitter
                     base_wait = 2 ** (attempt + 1)
                     jitter = base_wait * random.uniform(-0.2, 0.2)
                     wait = max(1, base_wait + jitter)
-                    # 尝试从 RateLimitError 中提取 Retry-After header
                     retry_after = self._get_retry_after(e)
                     if retry_after:
                         wait = max(wait, retry_after)
@@ -183,7 +196,16 @@ class LLMAdapter:
             try:
                 result_holder[0] = client.messages.create(**kwargs)
             except Exception as e:
-                error_holder[0] = e
+                # anthropic SDK 可重试异常包装为 RetryableError
+                retryable_types = []
+                for cls_name in ('RateLimitError', 'InternalServerError', 'APIConnectionError', 'APITimeoutError'):
+                    cls = getattr(anthropic, cls_name, None)
+                    if cls:
+                        retryable_types.append(cls)
+                if retryable_types and isinstance(e, tuple(retryable_types)):
+                    error_holder[0] = RetryableError(f"{type(e).__name__}: {str(e).strip()}")
+                else:
+                    error_holder[0] = e
 
         api_thread = threading.Thread(target=api_call, daemon=True)
         api_thread.start()
@@ -195,7 +217,7 @@ class LLMAdapter:
                 raise LLMError("已中断")
             if time.monotonic() - start_time > timeout + 10:
                 # 超过超时 + 10s 宽限期，强制视为超时
-                raise LLMError(f"API 请求超时 ({timeout}s)")
+                raise RetryableError(f"API 请求超时 ({timeout}s)")
             api_thread.join(timeout=0.1)
 
         if error_holder[0] is not None:
@@ -331,6 +353,13 @@ class LLMAdapter:
                 )
                 resp.raise_for_status()
                 result_holder[0] = resp.json()
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in (429, 500, 502, 503, 504):
+                    error_holder[0] = RetryableError(f"HTTP {e.response.status_code}: {str(e).strip()}")
+                else:
+                    error_holder[0] = e
+            except (httpx.ConnectError, httpx.TimeoutException) as e:
+                error_holder[0] = RetryableError(f"{type(e).__name__}: {str(e).strip()}")
             except Exception as e:
                 error_holder[0] = e
 
@@ -342,7 +371,7 @@ class LLMAdapter:
                 api_thread.join(timeout=2)
                 raise LLMError("已中断")
             if time.monotonic() - start_time > timeout + 10:
-                raise LLMError(f"API 请求超时 ({timeout}s)")
+                raise RetryableError(f"API 请求超时 ({timeout}s)")
             api_thread.join(timeout=0.1)
 
         if error_holder[0] is not None:

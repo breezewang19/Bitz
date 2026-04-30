@@ -4,7 +4,7 @@ import threading
 from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
-from agent.adapter import LLMAdapter, LLMResponse, LLMError
+from agent.adapter import LLMAdapter, LLMResponse, LLMError, RetryableError
 
 
 class TestLLMAdapterChat:
@@ -181,3 +181,220 @@ class TestLLMAdapterOpenAI:
         assert len(response.content) == 1
         assert response.content[0]["name"] == "bash"
         assert response.content[0]["id"] == "call_1"
+
+
+class TestRetryableError:
+    """RetryableError 异常类测试"""
+
+    def test_retryable_error_is_exception(self):
+        err = RetryableError("timeout")
+        assert isinstance(err, Exception)
+        assert not isinstance(err, LLMError)
+
+    def test_llm_error_is_exception(self):
+        err = LLMError("中断")
+        assert isinstance(err, Exception)
+        assert not isinstance(err, RetryableError)
+
+
+class TestRetryLogic:
+    """重试逻辑测试"""
+
+    @patch("anthropic.Anthropic")
+    def test_timeout_retries(self, mock_anthropic_cls):
+        """超时错误应触发重试"""
+        mock_client = MagicMock()
+        mock_anthropic_cls.return_value = mock_client
+
+        # 第一次超时，第二次成功
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "OK"
+        mock_message = MagicMock()
+        mock_message.content = [text_block]
+        mock_message.stop_reason = "end_turn"
+
+        call_count = [0]
+        def create_side_effect(**kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise RetryableError("API 请求超时 (120s)")
+            return mock_message
+
+        mock_client.messages.create.side_effect = create_side_effect
+
+        adapter = LLMAdapter(api_key="test", model="test-model")
+        response = adapter.chat(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[],
+            max_retries=3,
+        )
+        assert response.content == "OK"
+        assert call_count[0] == 2
+
+    @patch("anthropic.Anthropic")
+    def test_timeout_exhausted_raises_llm_error(self, mock_anthropic_cls):
+        """超时重试耗尽后应抛 LLMError"""
+        mock_client = MagicMock()
+        mock_anthropic_cls.return_value = mock_client
+        mock_client.messages.create.side_effect = RetryableError("API 请求超时")
+
+        adapter = LLMAdapter(api_key="test", model="test-model")
+        with pytest.raises(LLMError, match="重试耗尽"):
+            adapter.chat(
+                messages=[{"role": "user", "content": "hi"}],
+                tools=[],
+                max_retries=2,
+            )
+
+    @patch("anthropic.Anthropic")
+    def test_rate_limit_retries(self, mock_anthropic_cls):
+        """RateLimitError 应触发重试"""
+        import anthropic
+        mock_client = MagicMock()
+        mock_anthropic_cls.return_value = mock_client
+
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "OK"
+        mock_message = MagicMock()
+        mock_message.content = [text_block]
+        mock_message.stop_reason = "end_turn"
+
+        call_count = [0]
+        def create_side_effect(**kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise anthropic.RateLimitError(message="rate limited", response=MagicMock(), body=None)
+            return mock_message
+
+        mock_client.messages.create.side_effect = create_side_effect
+
+        adapter = LLMAdapter(api_key="test", model="test-model")
+        response = adapter.chat(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[],
+            max_retries=3,
+        )
+        assert response.content == "OK"
+        assert call_count[0] == 2
+
+    @patch("anthropic.Anthropic")
+    def test_internal_server_error_retries(self, mock_anthropic_cls):
+        """InternalServerError (5xx) 应触发重试"""
+        import anthropic
+        mock_client = MagicMock()
+        mock_anthropic_cls.return_value = mock_client
+
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "OK"
+        mock_message = MagicMock()
+        mock_message.content = [text_block]
+        mock_message.stop_reason = "end_turn"
+
+        call_count = [0]
+        def create_side_effect(**kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise anthropic.InternalServerError(message="500", response=MagicMock(), body=None)
+            return mock_message
+
+        mock_client.messages.create.side_effect = create_side_effect
+
+        adapter = LLMAdapter(api_key="test", model="test-model")
+        response = adapter.chat(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[],
+            max_retries=3,
+        )
+        assert response.content == "OK"
+        assert call_count[0] == 2
+
+    @patch("anthropic.Anthropic")
+    def test_api_connection_error_retries(self, mock_anthropic_cls):
+        """APIConnectionError 应触发重试"""
+        import anthropic
+        import httpx
+        mock_client = MagicMock()
+        mock_anthropic_cls.return_value = mock_client
+
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "OK"
+        mock_message = MagicMock()
+        mock_message.content = [text_block]
+        mock_message.stop_reason = "end_turn"
+
+        call_count = [0]
+        def create_side_effect(**kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise anthropic.APIConnectionError(
+                    message="connection failed",
+                    request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
+                )
+            return mock_message
+
+        mock_client.messages.create.side_effect = create_side_effect
+
+        adapter = LLMAdapter(api_key="test", model="test-model")
+        response = adapter.chat(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[],
+            max_retries=3,
+        )
+        assert response.content == "OK"
+        assert call_count[0] == 2
+
+    @patch("anthropic.Anthropic")
+    def test_user_cancel_not_retried(self, mock_anthropic_cls):
+        """用户中断（LLMError）不应重试"""
+        mock_client = MagicMock()
+        mock_anthropic_cls.return_value = mock_client
+        mock_client.messages.create.side_effect = LLMError("已中断")
+
+        adapter = LLMAdapter(api_key="test", model="test-model")
+        with pytest.raises(LLMError, match="已中断"):
+            adapter.chat(
+                messages=[{"role": "user", "content": "hi"}],
+                tools=[],
+                max_retries=5,
+            )
+        # 只调用了一次，没有重试
+        assert mock_client.messages.create.call_count == 1
+
+    @patch("anthropic.Anthropic")
+    def test_on_retry_callback_called(self, mock_anthropic_cls):
+        """重试时应调用 on_retry 回调"""
+        mock_client = MagicMock()
+        mock_anthropic_cls.return_value = mock_client
+
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "OK"
+        mock_message = MagicMock()
+        mock_message.content = [text_block]
+        mock_message.stop_reason = "end_turn"
+
+        call_count = [0]
+        def create_side_effect(**kwargs):
+            call_count[0] += 1
+            if call_count[0] <= 2:
+                raise RetryableError("超时")
+            return mock_message
+
+        mock_client.messages.create.side_effect = create_side_effect
+
+        retry_calls = []
+        def on_retry(err_msg, attempt, max_retries):
+            retry_calls.append((err_msg, attempt, max_retries))
+
+        adapter = LLMAdapter(api_key="test", model="test-model", on_retry=on_retry)
+        response = adapter.chat(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[],
+            max_retries=5,
+        )
+        assert response.content == "OK"
+        assert len(retry_calls) == 2  # 两次超时，两次回调

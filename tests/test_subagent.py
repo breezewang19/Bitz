@@ -317,3 +317,166 @@ class TestSpawnExecution:
         parent = MagicMock()
         result = tools.execute("spawn", {}, agent=parent)
         assert "错误" in result
+
+
+class TestOnEventCallback:
+    """on_event 回调测试"""
+
+    @patch("agent.subagent.Agent")
+    def test_on_event_done_fired_on_success(self, MockAgentCls):
+        parent = _make_parent_agent()
+        mock_instance = MockAgentCls.return_value
+        mock_instance.run.return_value = "ok"
+        mock_instance._step_count = 2
+
+        events = []
+        def on_event(event_type, task_index, **kwargs):
+            events.append((event_type, task_index, kwargs))
+
+        spec = SubAgentSpec(task="test")
+        sub = SubAgent(parent, spec, on_event=on_event, task_index=0)
+        result = sub.run()
+
+        done_events = [e for e in events if e[0] == "done"]
+        assert len(done_events) == 1
+        assert done_events[0][1] == 0  # task_index
+        assert done_events[0][2]["success"] is True
+        assert done_events[0][2]["steps"] == 2
+
+    @patch("agent.subagent.Agent")
+    def test_on_event_done_fired_on_error(self, MockAgentCls):
+        parent = _make_parent_agent()
+        mock_instance = MockAgentCls.return_value
+        mock_instance.run.side_effect = LLMError("fail")
+
+        events = []
+        def on_event(event_type, task_index, **kwargs):
+            events.append((event_type, task_index, kwargs))
+
+        spec = SubAgentSpec(task="test")
+        sub = SubAgent(parent, spec, on_event=on_event, task_index=1)
+        result = sub.run()
+
+        done_events = [e for e in events if e[0] == "done"]
+        assert len(done_events) == 1
+        assert done_events[0][1] == 1  # task_index
+        assert done_events[0][2]["success"] is False
+
+    def test_on_event_none_no_crash(self):
+        """on_event=None 时不应崩溃"""
+        parent = _make_parent_agent()
+        spec = SubAgentSpec(task="test")
+        sub = SubAgent(parent, spec, on_event=None)
+        # 不调用 run()，只验证构造不崩溃
+        assert sub._on_event is None
+
+    def test_on_text_injected_to_agent(self):
+        """on_event 设置后，内部 Agent 应有 _on_text 回调"""
+        parent = _make_parent_agent()
+        events = []
+        def on_event(event_type, task_index, **kwargs):
+            events.append((event_type, task_index, kwargs))
+
+        spec = SubAgentSpec(task="test")
+        sub = SubAgent(parent, spec, on_event=on_event, task_index=0)
+        assert sub._agent._on_text is not None
+
+        # 模拟 _on_text 被调用
+        sub._agent._on_text("checking something")
+        text_events = [e for e in events if e[0] == "text"]
+        assert len(text_events) == 1
+        assert text_events[0][2]["text"] == "checking something"
+
+    def test_tool_logging_injected(self):
+        """on_event 设置后，工具执行应触发 tool_start/tool_end 事件"""
+        parent = _make_parent_agent()
+        parent.tools.register("bash", "run command", {"type": "object", "properties": {}}, handler=lambda command: "output")
+
+        events = []
+        def on_event(event_type, task_index, **kwargs):
+            events.append((event_type, task_index, kwargs))
+
+        spec = SubAgentSpec(task="test")
+        sub = SubAgent(parent, spec, on_event=on_event, task_index=0)
+
+        # 执行工具
+        result = sub._tools.execute("bash", {"command": "ls"})
+        tool_start_events = [e for e in events if e[0] == "tool_start"]
+        tool_end_events = [e for e in events if e[0] == "tool_end"]
+        assert len(tool_start_events) == 1
+        assert tool_start_events[0][2]["tool_name"] == "bash"
+        assert tool_start_events[0][2]["args_summary"] == "ls"
+        assert len(tool_end_events) == 1
+
+    def test_task_index_passed_through(self):
+        """task_index 应正确传递到 on_event 回调"""
+        parent = _make_parent_agent()
+        events = []
+        def on_event(event_type, task_index, **kwargs):
+            events.append((event_type, task_index, kwargs))
+
+        spec = SubAgentSpec(task="test")
+        sub = SubAgent(parent, spec, on_event=on_event, task_index=5)
+        # 触发 _on_text
+        sub._agent._on_text("hello")
+        assert events[-1][1] == 5
+
+
+class TestFormatArgsSummary:
+    """_format_args_summary 函数测试"""
+
+    def test_bash(self):
+        from agent.subagent import _format_args_summary
+        assert _format_args_summary("bash", {"command": "ls -la"}) == "ls -la"
+
+    def test_read_file(self):
+        from agent.subagent import _format_args_summary
+        assert _format_args_summary("read_file", {"path": "/tmp/f.py"}) == "/tmp/f.py"
+
+    def test_write_file(self):
+        from agent.subagent import _format_args_summary
+        assert _format_args_summary("write_file", {"path": "a.py", "content": "hello"}) == "a.py (5 chars)"
+
+    def test_unknown_tool(self):
+        from agent.subagent import _format_args_summary
+        assert _format_args_summary("custom", {"x": 1}) == "{'x': 1}"
+
+
+class TestSpawnWithOnEvent:
+    """spawn 工具传递 on_event 测试"""
+
+    @patch("agent.subagent.SubAgent")
+    def test_single_task_fires_task_start(self, MockSubAgentCls):
+        tools = create_tools()
+        mock_result = SubAgentResult(success=True, output="done", steps=1, elapsed=1.0)
+        MockSubAgentCls.return_value.run.return_value = mock_result
+
+        events = []
+        def on_event(event_type, task_index, **kwargs):
+            events.append((event_type, task_index, kwargs))
+
+        parent = MagicMock()
+        result = tools.execute("spawn", {"task": "review code"}, agent=parent, on_event=on_event)
+
+        task_start_events = [e for e in events if e[0] == "task_start"]
+        assert len(task_start_events) == 1
+        assert task_start_events[0][2]["task_name"] == "review code"
+
+    @patch("agent.subagent.run_parallel")
+    def test_parallel_tasks_fire_task_start(self, mock_parallel):
+        tools = create_tools()
+        mock_results = [
+            SubAgentResult(success=True, output="r1", steps=1, elapsed=1.0),
+            SubAgentResult(success=True, output="r2", steps=1, elapsed=1.0),
+        ]
+        mock_parallel.return_value = mock_results
+
+        events = []
+        def on_event(event_type, task_index, **kwargs):
+            events.append((event_type, task_index, kwargs))
+
+        parent = MagicMock()
+        result = tools.execute("spawn", {"tasks": ["task1", "task2"]}, agent=parent, on_event=on_event)
+
+        task_start_events = [e for e in events if e[0] == "task_start"]
+        assert len(task_start_events) == 2
