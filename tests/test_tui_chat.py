@@ -2,7 +2,7 @@ import pytest
 from textual.app import App, ComposeResult
 from tui.widgets.chat import (
     ChatLog, UserMessage, AssistantMessage, ThinkingIndicator,
-    format_tool_content,
+    format_tool_content, SubAgentCard,
 )
 from tui.widgets.tool_card import ToolCard
 
@@ -153,3 +153,36 @@ async def test_auto_scroll():
             chat.add_message("user", f"Message {i}")
         await pilot.pause()
         assert chat.scroll_y > 0
+
+
+@pytest.mark.asyncio
+async def test_subagent_card_running():
+    app = ChatTestApp()
+    async with app.run_test() as pilot:
+        card = SubAgentCard(task="review code", count=3)
+        chat = app.query_one(ChatLog)
+        chat.mount(card)
+        await pilot.pause()
+        rendered = card.render()
+        assert "0/3" in rendered.plain
+        assert "Running" in rendered.plain
+
+
+@pytest.mark.asyncio
+async def test_subagent_card_with_results():
+    from agent.subagent import SubAgentResult
+    app = ChatTestApp()
+    async with app.run_test() as pilot:
+        card = SubAgentCard(task="review code", count=3)
+        chat = app.query_one(ChatLog)
+        chat.mount(card)
+        await pilot.pause()
+
+        card.add_result(SubAgentResult(success=True, output="ok", steps=3, elapsed=5.0))
+        card.add_result(SubAgentResult(success=False, output="", error="timeout", steps=0, elapsed=2.0))
+        await pilot.pause()
+
+        rendered = card.render()
+        assert "2/3" in rendered.plain
+        assert "✓" in rendered.plain
+        assert "✗" in rendered.plain

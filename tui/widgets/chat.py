@@ -226,3 +226,43 @@ class ChatLog(VerticalScroll):
 
     def _scroll_to_bottom(self) -> None:
         self.scroll_end(animate=False)
+
+
+class SubAgentCard(Static):
+    """子 Agent 状态卡片"""
+    DEFAULT_CSS = """
+    SubAgentCard {
+        background: #1a1a2e;
+        border: round #6272a4;
+        margin: 0 0 1 0;
+        padding: 0 1;
+        height: auto;
+    }
+    """
+
+    def __init__(self, task: str, count: int = 1) -> None:
+        super().__init__()
+        self._task = task
+        self._count = count
+        self._results: list = []
+        self._done = 0
+
+    def render(self) -> Text:
+        if self._results:
+            parts = [Text(f"SubAgent ({self._done}/{self._count}): ", style=COLORS["tool"])]
+            for i, r in enumerate(self._results):
+                if r.success:
+                    parts.append(Text(f"\n  ✓ 任务{i + 1}: {r.steps}步 {r.elapsed:.1f}s", style=COLORS["user"]))
+                else:
+                    parts.append(Text(f"\n  ✗ 任务{i + 1}: {r.error}", style=COLORS["error"]))
+            return Text.assemble(*parts)
+        else:
+            return Text.assemble(
+                Text(f"SubAgent (0/{self._count}): ", style=COLORS["tool"]),
+                Text("Running...", style=COLORS["thinking"]),
+            )
+
+    def add_result(self, result) -> None:
+        self._results.append(result)
+        self._done += 1
+        self.refresh()
