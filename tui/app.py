@@ -12,7 +12,7 @@ from textual.events import Key
 
 from tui.theme import BITZ_CSS
 from tui.widgets.banner import BannerWidget, GoodbyeWidget
-from tui.widgets.chat import ChatLog, format_tool_content, ThinkingIndicator
+from tui.widgets.chat import ChatLog, format_tool_content, ThinkingIndicator, SubAgentCard
 from tui.widgets.confirm import ConfirmPrompt
 from tui.widgets.input import InputBar
 from tui.widgets.status import StatusBar
@@ -39,6 +39,7 @@ class BitzApp(App):
         self._skill_registry = skill_registry or SkillRegistry()
         self._original_execute = agent.tools.execute
         self._cancel_event = threading.Event()
+        self._subagent_card = None
         self._confirmed_tools: set = set()
         self._step_count = 0
         self._thinking_task: asyncio.Task | None = None
@@ -79,7 +80,20 @@ class BitzApp(App):
         original = self._original_execute
         app = self
 
-        def logged_execute(name, args, confirmed=False, tool_id=None):
+        def logged_execute(name, args, confirmed=False, tool_id=None, agent=None):
+            # spawn 工具特殊处理：显示 SubAgentCard
+            if name == "spawn":
+                tasks = args.get("tasks", []) if isinstance(args, dict) else []
+                task_desc = (args.get("task", "") if isinstance(args, dict) else "") or f"{len(tasks)} 个并发任务"
+                count = 1 if (args.get("task", "") if isinstance(args, dict) else "") else len(tasks)
+                card = SubAgentCard(task=task_desc, count=count)
+                chat = app.query_one(ChatLog)
+                app.call_from_thread(chat.mount, card)
+                app._subagent_card = card
+                result = original(name, args, confirmed=confirmed, tool_id=tool_id, agent=agent)
+                app._subagent_card = None
+                return result
+
             content = format_tool_content(name, args if isinstance(args, dict) else {})
             app._post_tool_call(name, content)
             app._set_tool_running(name)
@@ -101,7 +115,7 @@ class BitzApp(App):
                         except Exception:
                             pass
 
-                result = original(name, args, confirmed=confirmed, tool_id=tool_id)
+                result = original(name, args, confirmed=confirmed, tool_id=tool_id, agent=agent)
                 is_error = result.startswith("Error") or result.startswith("[CONFIRM_REQUIRED]")
 
                 # 生成 diff

@@ -91,7 +91,7 @@ def test_agent_run_tool_call():
     assert result == "Tool returned: hello"
 
     # Check tool was executed
-    mock_tools.execute.assert_called_once_with("echo", {"x": "hello"}, confirmed=False, tool_id="toolu_01")
+    mock_tools.execute.assert_called_once_with("echo", {"x": "hello"}, confirmed=False, tool_id="toolu_01", agent=agent)
 
     # Check context: user, assistant tool_use, tool result, assistant end_turn
     assert len(ctx.messages) == 4
@@ -202,7 +202,7 @@ def test_agent_confirm_pending_with_confirmed_results():
     mock_tools = MagicMock()
 
     # LLM 返回两个 tool_use：echo 不需要确认，bash 需要确认
-    def execute_side_effect(name, args, confirmed=False, tool_id=""):
+    def execute_side_effect(name, args, confirmed=False, tool_id="", agent=None):
         if name == "echo":
             return "echo result"
         if name == "bash":
