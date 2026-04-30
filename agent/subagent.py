@@ -80,3 +80,69 @@ class SubAgent:
             max_steps=spec.max_steps,
         )
         self._agent.auto_confirm = True
+
+    def run(self, cancel_event: threading.Event | None = None) -> SubAgentResult:
+        """执行子 Agent 任务"""
+        start = time.monotonic()
+        try:
+            if self._on_status:
+                self._on_status(self._task_id, "running")
+            result_text = self._agent.run(
+                user_input=None,
+                cancel_event=cancel_event,
+            )
+            elapsed = time.monotonic() - start
+            if self._on_status:
+                self._on_status(self._task_id, "done")
+            return SubAgentResult(
+                success=True,
+                output=result_text or "",
+                steps=self._agent._step_count,
+                elapsed=elapsed,
+            )
+        except LLMError as e:
+            elapsed = time.monotonic() - start
+            if self._on_status:
+                self._on_status(self._task_id, "error")
+            return SubAgentResult(
+                success=False,
+                output="",
+                steps=0,
+                elapsed=elapsed,
+                error=str(e),
+            )
+        except Exception as e:
+            elapsed = time.monotonic() - start
+            if self._on_status:
+                self._on_status(self._task_id, "error")
+            return SubAgentResult(
+                success=False,
+                output="",
+                steps=0,
+                elapsed=elapsed,
+                error=f"{type(e).__name__}: {e}",
+            )
+
+
+def run_parallel(
+    specs: list[SubAgentSpec],
+    parent_agent,
+    cancel_event: threading.Event | None = None,
+    on_status: Callable[[str, str], None] | None = None,
+    max_workers: int = 3,
+) -> list[SubAgentResult]:
+    """并发执行多个子 Agent 任务"""
+    results: dict[int, SubAgentResult] = {}
+
+    def _run_one(spec: SubAgentSpec) -> tuple[int, SubAgentResult]:
+        sub = SubAgent(parent_agent, spec, on_status=on_status)
+        result = sub.run(cancel_event=cancel_event)
+        return id(spec), result
+
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(specs))) as pool:
+        futures = {pool.submit(_run_one, spec): id(spec) for spec in specs}
+        for future in as_completed(futures):
+            spec_id, result = future.result()
+            results[spec_id] = result
+
+    return [results[id(spec)] for spec in specs]

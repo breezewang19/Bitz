@@ -16,8 +16,9 @@ class Agent:
         self.max_steps = max_steps
         self._pending_confirm: tuple = None  # (tool_id, tool_name, tool_args, result)
         self._confirmed_results: list = []   # 已确认但未写入上下文的工具结果
-        self._on_text: callable = None
-        self.auto_confirm: bool = False  # 子 agent 自动确认  # 中间文字输出回调（由 TUI 设置）
+        self._on_text: callable = None  # 中间文字输出回调（由 TUI 设置）
+        self.auto_confirm: bool = False  # 子 agent 自动确认
+        self._step_count: int = 0  # 已执行步数
 
     def run(self, user_input: str | None = None, cancel_event: threading.Event = None,
             confirmed_tools: set = None, skip_add_user: bool = False) -> str:
@@ -62,6 +63,7 @@ class Agent:
 
                 pending_tools = []
                 confirmed_results = []
+                self._step_count += 1
 
                 for tool_use in tool_blocks:
                     tool_name = tool_use["name"]
