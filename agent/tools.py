@@ -117,6 +117,24 @@ class ToolRegistry:
         except Exception as e:
             return f"Error executing {name}: {e}"
 
+    def filter_for_agent(self, agent_def: "AgentDefinition") -> "ToolRegistry":
+        """Return a new registry with tools filtered by agent definition's disallowed_tools."""
+        from agent.agent_definition import AgentDefinition
+
+        filtered = ToolRegistry()
+        for name, tool in self.tools.items():
+            if name not in agent_def.disallowed_tools:
+                filtered.register(
+                    name=name,
+                    description=tool.description,
+                    input_schema=tool.input_schema,
+                    handler=tool.handler,
+                    dangerous=tool.dangerous,
+                    is_readonly=tool.is_readonly,
+                    is_extra_dangerous=tool.is_extra_dangerous,
+                )
+        return filtered
+
     def list_for_llm(self) -> list[dict]:
         """返回给 LLM 的工具定义列表"""
         return [

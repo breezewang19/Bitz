@@ -1,6 +1,7 @@
 # tests/test_agent_definition.py
 from agent.agent_definition import AgentDefinition, RuntimeInfo, BUILTIN_AGENTS
 from agent.prompt import build_system_prompt
+from agent.tools import ToolRegistry
 
 
 class TestRuntimeInfo:
@@ -142,3 +143,64 @@ class TestBuildSystemPromptStripping:
         agent_def = BUILTIN_AGENTS["general-purpose"]
         result = build_system_prompt(agent_def=agent_def, runtime_info=info)
         assert result  # non-empty
+
+
+class TestToolFiltering:
+    def _make_registry_with_tools(self):
+        """Create a registry with mock tools for testing."""
+        registry = ToolRegistry()
+
+        def mock_fn(**kwargs):
+            return "mock"
+
+        registry.register(
+            name="read_file",
+            description="Read a file",
+            input_schema={"type": "object", "properties": {"path": {"type": "string"}}},
+            handler=mock_fn,
+        )
+        registry.register(
+            name="write_file",
+            description="Write a file",
+            input_schema={"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}},
+            handler=mock_fn,
+            dangerous=True,
+        )
+        registry.register(
+            name="edit_file",
+            description="Edit a file",
+            input_schema={"type": "object", "properties": {"path": {"type": "string"}, "old": {"type": "string"}, "new": {"type": "string"}}},
+            handler=mock_fn,
+            dangerous=True,
+        )
+        registry.register(
+            name="spawn",
+            description="Spawn subagent",
+            input_schema={"type": "object", "properties": {"task": {"type": "string"}}},
+            handler=mock_fn,
+        )
+        return registry
+
+    def test_general_purpose_keeps_all_tools(self):
+        registry = self._make_registry_with_tools()
+        agent_def = BUILTIN_AGENTS["general-purpose"]
+        filtered = registry.filter_for_agent(agent_def)
+        assert len(filtered.tools) == 4
+
+    def test_explore_removes_write_tools(self):
+        registry = self._make_registry_with_tools()
+        agent_def = BUILTIN_AGENTS["explore"]
+        filtered = registry.filter_for_agent(agent_def)
+        tool_names = set(filtered.tools.keys())
+        assert "read_file" in tool_names
+        assert "write_file" not in tool_names
+        assert "edit_file" not in tool_names
+        assert "spawn" not in tool_names
+
+    def test_plan_removes_write_tools(self):
+        registry = self._make_registry_with_tools()
+        agent_def = BUILTIN_AGENTS["plan"]
+        filtered = registry.filter_for_agent(agent_def)
+        tool_names = set(filtered.tools.keys())
+        assert "read_file" in tool_names
+        assert "write_file" not in tool_names
