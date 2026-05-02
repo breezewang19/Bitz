@@ -41,6 +41,31 @@ class LLMAdapter:
             self.api_url = f"{base_url}/v1/messages"
         self._on_retry = on_retry  # callback(err_msg, attempt, max_retries)
         self._last_usage = None  # 最近一次 API 响应的 usage 数据
+        self._client = None  # lazily initialized Anthropic client
+
+    def _get_client(self):
+        """Lazily initialize and reuse the Anthropic client."""
+        if self._client is None:
+            import anthropic
+            import httpx
+            self._client = anthropic.Anthropic(
+                api_key=self.api_key,
+                base_url=self.base_url,
+                timeout=httpx.Timeout(120.0, connect=10.0),
+            )
+        return self._client
+
+    def _build_system_prompt_blocks(self, system_prompt: str) -> list[dict]:
+        """Split system prompt into content blocks with cache_control on the last block."""
+        chunk_size = 1000
+        chunks = []
+        for i in range(0, len(system_prompt), chunk_size):
+            chunks.append(system_prompt[i:i + chunk_size])
+
+        blocks = [{"type": "text", "text": chunk} for chunk in chunks]
+        if blocks:
+            blocks[-1]["cache_control"] = {"type": "ephemeral"}
+        return blocks
 
     def chat(self, messages: list[dict], tools: list[dict], cancel_event: threading.Event = None, max_retries: int = 5) -> LLMResponse:
         """发送请求到 LLM（Anthropic 协议），带重试"""
@@ -130,11 +155,7 @@ class LLMAdapter:
         import anthropic  # 延迟导入，避免启动时加载 ~3s
         import httpx
 
-        client = anthropic.Anthropic(
-            api_key=self.api_key,
-            base_url=self.base_url,
-            timeout=httpx.Timeout(timeout, connect=10.0)
-        )
+        client = self._get_client()
 
         # 分离 system prompt 和对话消息
         system_prompt = ""
@@ -174,7 +195,7 @@ class LLMAdapter:
         }
 
         if system_prompt:
-            kwargs["system"] = system_prompt
+            kwargs["system"] = self._build_system_prompt_blocks(system_prompt)
 
         if tools:
             # Anthropic 工具格式
@@ -186,6 +207,8 @@ class LLMAdapter:
                     "input_schema": tool.get("input_schema", {})
                 })
             kwargs["tools"] = anthropic_tools
+            if anthropic_tools:
+                anthropic_tools[-1]["cache_control"] = {"type": "ephemeral"}
 
         # 在后台线程执行 API 调用，主线程轮询 cancel_event
         result_holder = [None]

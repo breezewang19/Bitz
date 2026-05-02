@@ -2,6 +2,7 @@
 from agent.agent_definition import AgentDefinition, RuntimeInfo, BUILTIN_AGENTS
 from agent.prompt import build_system_prompt
 from agent.tools import ToolRegistry, _is_readonly_command
+from agent.adapter import LLMAdapter
 
 
 class TestRuntimeInfo:
@@ -245,3 +246,32 @@ class TestReadonlyPermission:
 
     def test_echo_redirect_is_not_readonly(self):
         assert _is_readonly_command("echo 'test' > file.txt") is False
+
+
+class TestLLMAdapterCacheControl:
+    def test_system_prompt_with_cache_control(self):
+        """Verify system prompt is sent as content blocks with cache_control."""
+        adapter = LLMAdapter(api_key="test-key")
+        blocks = adapter._build_system_prompt_blocks("Hello world")
+        assert isinstance(blocks, list)
+        assert len(blocks) >= 1
+        # Last block should have cache_control
+        last_block = blocks[-1]
+        assert last_block.get("cache_control") == {"type": "ephemeral"}
+
+    def test_system_prompt_blocks_are_text_type(self):
+        adapter = LLMAdapter(api_key="test-key")
+        blocks = adapter._build_system_prompt_blocks("Test prompt")
+        for block in blocks:
+            assert block["type"] == "text"
+
+    def test_client_reuse(self):
+        """Verify the Anthropic client is reused across calls."""
+        from unittest.mock import MagicMock
+        adapter = LLMAdapter(api_key="test-key")
+        mock_client = MagicMock()
+        adapter._client = mock_client
+        client1 = adapter._get_client()
+        client2 = adapter._get_client()
+        assert client1 is client2
+        assert client1 is mock_client
