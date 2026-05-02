@@ -151,18 +151,23 @@ Based on `AgentDefinition` flags:
 
 ### Implementation
 
-Modify `build_system_prompt()` to accept an `AgentDefinition` parameter and conditionally include sections:
+Modify `build_system_prompt()` to accept an `AgentDefinition` parameter and conditionally include sections. The signature changes from `build_system_prompt(cwd, skill_registry)` to `build_system_prompt(agent_def, runtime_info)`:
+
+- `RuntimeInfo.working_dir` replaces the `cwd` parameter.
+- `RuntimeInfo.skill_summary` replaces the `skill_registry` parameter — the caller pre-computes the summary string from the skill registry before calling `build_system_prompt()`.
+
+**`RuntimeInfo` construction site**: `_execute_spawn()` in `agent/tools.py` constructs the `RuntimeInfo` instance by gathering `os.getcwd()`, `sys.platform`, `os.environ.get("SHELL")`, and computing the skill summary from the parent agent's skill registry. This `RuntimeInfo` is then passed to both `build_system_prompt()` and `AgentDefinition.get_system_prompt()`.
 
 ```python
 def build_system_prompt(
     agent_def: AgentDefinition | None = None,
-    context: RuntimeInfo | None = None
+    runtime_info: RuntimeInfo | None = None
 ) -> str:
     sections = [PERSONA, RULES]
     if not agent_def or not agent_def.omit_claude_md:
         sections.append(claude_md_rules)
-    sections.append(build_environment_section(context))
-    if context and context.skill_summary:
+    sections.append(build_environment_section(runtime_info))
+    if runtime_info and runtime_info.skill_summary:
         sections.append(skill_summary_section)
     return "\n\n".join(sections)
 ```
@@ -203,7 +208,12 @@ def filter_tools_for_agent(
     filtered = ToolRegistry()
     for name, tool in parent_tools.tools.items():
         if name not in agent_def.disallowed_tools:
-            filtered.register(name, tool["fn"], tool["schema"])
+            filtered.register(
+                name, tool.description, tool.input_schema, tool.handler,
+                dangerous=tool.dangerous,
+                is_readonly=tool.is_readonly,
+                is_extra_dangerous=tool.is_extra_dangerous
+            )
     return filtered
 ```
 
