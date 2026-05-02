@@ -1,7 +1,7 @@
 # tests/test_agent_definition.py
 from agent.agent_definition import AgentDefinition, RuntimeInfo, BUILTIN_AGENTS
 from agent.prompt import build_system_prompt
-from agent.tools import ToolRegistry
+from agent.tools import ToolRegistry, _is_readonly_command
 
 
 class TestRuntimeInfo:
@@ -204,3 +204,44 @@ class TestToolFiltering:
         tool_names = set(filtered.tools.keys())
         assert "read_file" in tool_names
         assert "write_file" not in tool_names
+
+
+class TestReadonlyPermission:
+    def test_ls_is_readonly(self):
+        assert _is_readonly_command("ls -la") is True
+
+    def test_cat_is_readonly(self):
+        assert _is_readonly_command("cat file.txt") is True
+
+    def test_git_status_is_readonly(self):
+        assert _is_readonly_command("git status") is True
+
+    def test_git_log_is_readonly(self):
+        assert _is_readonly_command("git log --oneline") is True
+
+    def test_grep_is_readonly(self):
+        assert _is_readonly_command("grep -r 'pattern' src/") is True
+
+    def test_find_is_readonly(self):
+        assert _is_readonly_command("find . -name '*.py'") is True
+
+    def test_rm_is_not_readonly(self):
+        assert _is_readonly_command("rm -rf /tmp/test") is False
+
+    def test_pip_install_is_not_readonly(self):
+        assert _is_readonly_command("pip install requests") is False
+
+    def test_python_is_not_readonly(self):
+        assert _is_readonly_command("python script.py") is False
+
+    def test_git_push_is_not_readonly(self):
+        assert _is_readonly_command("git push") is False
+
+    def test_git_checkout_is_not_readonly(self):
+        assert _is_readonly_command("git checkout -b new-branch") is False
+
+    def test_empty_command_is_readonly(self):
+        assert _is_readonly_command("") is True
+
+    def test_echo_redirect_is_not_readonly(self):
+        assert _is_readonly_command("echo 'test' > file.txt") is False

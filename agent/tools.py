@@ -34,6 +34,86 @@ DANGEROUS_PATTERNS = [
 ]
 
 
+# Allowlist of readonly bash commands (base command → allowed subcommands or None for all)
+_READONLY_BASE_COMMANDS = {
+    "ls", "cat", "head", "tail", "less", "more", "wc",
+    "grep", "rg", "ag", "ack",
+    "find", "locate", "which", "whereis", "type",
+    "file", "stat", "du", "df",
+    "echo", "printf",  # only if no redirect
+    "pwd", "whoami", "id", "uname", "hostname",
+    "env", "printenv", "export",  # only reading, no setting
+    "test", "[", "[[",
+    "true", "false",
+    "git",  # subcommand-filtered below
+    "gh",   # subcommand-filtered below
+    "npm",  # subcommand-filtered below (list, view, etc.)
+}
+
+_READONLY_GIT_SUBCOMMANDS = {
+    "status", "log", "diff", "show", "branch", "tag", "remote",
+    "stash", "blame", "shortlog", "describe", "reflog",
+    "ls-files", "ls-remote", "ls-tree",
+    "rev-parse", "rev-list",
+    "config", "--list",
+}
+
+_READONLY_GH_SUBCOMMANDS = {
+    "pr", "view", "list", "api",
+}
+
+_READONLY_NPM_SUBCOMMANDS = {
+    "list", "ls", "view", "info", "outdated",
+}
+
+_REDIRECT_PATTERN = re.compile(
+    r'[|>`]'  # pipe, redirect, or backtick — could chain dangerous commands
+)
+
+
+def _is_readonly_command(cmd: str) -> bool:
+    """Check if a bash command is safe for readonly permission mode."""
+    cmd = cmd.strip()
+    if not cmd:
+        return True
+
+    # Block commands with pipes, redirects, or backticks
+    if _REDIRECT_PATTERN.search(cmd):
+        return False
+
+    parts = cmd.split()
+    base = parts[0]
+
+    # Handle path-qualified commands (e.g., /usr/bin/git)
+    if "/" in base:
+        base = base.rsplit("/", 1)[-1]
+
+    if base not in _READONLY_BASE_COMMANDS:
+        return False
+
+    # Subcommand filtering for git
+    if base == "git" and len(parts) > 1:
+        subcmd = parts[1]
+        if subcmd.startswith("-"):
+            return True  # flags like git --version are safe
+        if subcmd not in _READONLY_GIT_SUBCOMMANDS:
+            return False
+
+    # Subcommand filtering for gh
+    if base == "gh" and len(parts) > 1:
+        subcmd = parts[1]
+        if subcmd not in _READONLY_GH_SUBCOMMANDS:
+            return False
+
+    # Subcommand filtering for npm
+    if base == "npm" and len(parts) > 1:
+        subcmd = parts[1]
+        if subcmd not in _READONLY_NPM_SUBCOMMANDS:
+            return False
+
+    return True
+
+
 def check_dangerous_bash(command: str) -> Optional[str]:
     """检测危险 bash 命令，返回原因或 None"""
     for pattern, reason in DANGEROUS_PATTERNS:
