@@ -12,7 +12,25 @@ HALF_OUTPUT = MAX_OUTPUT // 2
 # spawn 工具定义（供 ToolRegistry._execute_spawn 使用）
 SPAWN_TOOL_DEF = {
     "name": "spawn",
-    "description": "创建子 Agent 执行任务。支持单个任务或并发多个任务。子 Agent 拥有独立上下文，不会污染主对话。适用于：并行审查多个检查点、独立执行子任务、隔离复杂操作。",
+    "description": (
+        "启动子 Agent 执行任务。\n"
+        "\n"
+        "可用 Agent 类型：\n"
+        "- general-purpose: 通用 Agent，可搜索代码、读写文件，适合复杂多步骤任务\n"
+        "- explore: 快速探索代码库，搜索文件和关键词，只读模式\n"
+        "- plan: 架构设计 Agent，制定实现计划，只读模式\n"
+        "\n"
+        "提示词编写指南：\n"
+        "- 像对刚进来的聪明同事一样简明扼要地说明任务\n"
+        "- 不要写\"根据你的发现修复bug\"——这把综合判断推给了 Agent\n"
+        "- 包含文件路径、行号、具体要改什么\n"
+        "- 简短的命令式提示词会产生肤浅的结果\n"
+        "- 提供足够的上下文让 Agent 能做出判断\n"
+        "\n"
+        "并行执行：\n"
+        "- 当多个任务互相独立时，使用 tasks 参数并行启动多个 Agent\n"
+        "- 对于有共享上下文的并行任务，使用 mode='fork' 共享提示缓存"
+    ),
     "input_schema": {
         "type": "object",
         "properties": {
