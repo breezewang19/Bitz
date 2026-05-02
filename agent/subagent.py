@@ -53,8 +53,8 @@ class SubAgentResult:
 class SubAgentSpec:
     """子 Agent 任务规格"""
     task: str
-    context_hint: str = ""
-    max_steps: int = 10
+    context_hint: str | None = None
+    max_steps: int | None = None
     model: str | None = None
     mode: str = "independent"           # "independent" | "fork"
     agent_type: str = "general-purpose"  # key into BUILTIN_AGENTS
@@ -147,8 +147,8 @@ class SubAgent:
                 user_content = f"{spec.context_hint}\n\n{spec.task}"
             self._context.add_user(user_content)
 
-        # Determine max_steps: use spec if explicitly set (not default 10), else agent_def
-        if spec.max_steps != 10:
+        # Determine max_steps: use spec if explicitly set, else agent_def default
+        if spec.max_steps is not None:
             max_steps = spec.max_steps
         else:
             max_steps = agent_def.max_steps

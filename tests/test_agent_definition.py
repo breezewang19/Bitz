@@ -247,6 +247,15 @@ class TestReadonlyPermission:
     def test_echo_redirect_is_not_readonly(self):
         assert _is_readonly_command("echo 'test' > file.txt") is False
 
+    def test_export_is_not_readonly(self):
+        assert _is_readonly_command("export FOO=bar") is False
+
+    def test_semicolon_is_not_readonly(self):
+        assert _is_readonly_command("ls; rm -rf /") is False
+
+    def test_command_substitution_is_not_readonly(self):
+        assert _is_readonly_command("echo $(cat /etc/passwd)") is False
+
 
 class TestLLMAdapterCacheControl:
     def test_system_prompt_with_cache_control(self):

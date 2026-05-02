@@ -42,7 +42,7 @@ _READONLY_BASE_COMMANDS = {
     "file", "stat", "du", "df",
     "echo", "printf",  # only if no redirect
     "pwd", "whoami", "id", "uname", "hostname",
-    "env", "printenv", "export",  # only reading, no setting
+    "env", "printenv",  # only reading, no setting
     "test", "[", "[[",
     "true", "false",
     "git",  # subcommand-filtered below
@@ -247,8 +247,8 @@ class ToolRegistry:
 
         task = args.get("task")
         tasks = args.get("tasks", [])
-        context_hint = args.get("context_hint", "")
-        max_steps = args.get("max_steps", 10)
+        context_hint = args.get("context_hint")
+        max_steps = args.get("max_steps")
         max_workers = args.get("max_workers", 3)
         agent_type = args.get("agent_type", "general-purpose")
         mode = args.get("mode", "independent")

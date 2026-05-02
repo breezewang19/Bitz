@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+
 FORK_BOILERPLATE_TAG = "fork_worker"
 
 
@@ -55,11 +57,11 @@ class ForkMessageBuilder:
         # Build per-child message lists
         results = []
         for directive in directives:
-            # Copy parent messages (shared prefix)
-            messages = [msg.copy() for msg in parent_messages[:-1]] if len(parent_messages) > 1 else []
+            # Deep copy parent messages (shared prefix) to avoid shared mutable state
+            messages = [copy.deepcopy(msg) for msg in parent_messages[:-1]] if len(parent_messages) > 1 else []
 
             # Add the assistant message with tool_use
-            messages.append(assistant_msg.copy())
+            messages.append(copy.deepcopy(assistant_msg))
 
             # Build the user message with shared placeholders + per-child directive
             directive_text = self._build_directive_text(directive)
