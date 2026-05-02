@@ -161,6 +161,14 @@ class ToolRegistry:
 
         tool = self.tools[name]
 
+        # Readonly permission mode enforcement
+        if hasattr(agent, 'permission_mode') and agent.permission_mode == "readonly":
+            if name == "bash" and "command" in args:
+                if not _is_readonly_command(args["command"]):
+                    return "错误：只读模式下不允许执行此命令"
+            elif name in ("write_file", "edit_file"):
+                return "错误：只读模式下不允许写入文件"
+
         # 只读命令自动批准，不需要确认
         if tool.dangerous and tool.is_readonly:
             try:
@@ -238,33 +246,92 @@ class ToolRegistry:
         context_hint = args.get("context_hint", "")
         max_steps = args.get("max_steps", 10)
         max_workers = args.get("max_workers", 3)
+        agent_type = args.get("agent_type", "general-purpose")
+        mode = args.get("mode", "independent")
 
         if not task and not tasks:
             return "错误：必须提供 task 或 tasks 参数"
 
+        # Build fork messages if mode is fork
+        fork_messages = None
+        if mode == "fork":
+            from agent.fork_message_builder import ForkMessageBuilder
+            builder = ForkMessageBuilder()
+            parent_ctx = getattr(agent, 'context', None)
+            if parent_ctx is not None:
+                parent_msgs = parent_ctx.get_messages()
+                # The last assistant message is the one containing the spawn tool_use
+                # Find the last assistant message in the conversation
+                assistant_msg = None
+                for msg in reversed(parent_msgs):
+                    if msg.get("role") == "assistant" and isinstance(msg.get("content"), list):
+                        assistant_msg = msg
+                        break
+                if assistant_msg is None:
+                    return "错误：fork 模式需要父 Agent 的 assistant 消息"
+
+                # Build directives from task or tasks
+                directives = [task] if task else tasks
+                fork_message_lists = builder.build_forked_messages(parent_msgs, assistant_msg, directives)
+                # For single task, use first (and only) fork message list
+                # For parallel tasks, each gets its own fork message list
+                if task:
+                    fork_messages = fork_message_lists[0] if fork_message_lists else None
+            else:
+                return "错误：fork 模式需要父 Agent 上下文"
+
         # 单任务
         if task:
-            spec = SubAgentSpec(task=task, context_hint=context_hint, max_steps=max_steps)
-            sub = SubAgent(agent, spec, on_event=on_event, task_index=0)
+            spec = SubAgentSpec(
+                task=task,
+                context_hint=context_hint,
+                max_steps=max_steps,
+                agent_type=agent_type,
+                mode=mode,
+            )
+            sub = SubAgent(agent, spec, on_event=on_event, task_index=0, fork_messages=fork_messages)
             if on_event:
                 on_event("task_start", 0, task_name=task[:50])
             result = sub.run()
             if result.success:
-                return f"子 Agent 完成（{result.steps} 步，{result.elapsed:.1f}s）:\n{result.output}"
+                token_info = f", {result.tokens} tokens" if result.tokens else ""
+                return f"子 Agent [{agent_type}] 完成（{result.steps} 步，{result.elapsed:.1f}s{token_info}）:\n{result.output}"
             else:
-                return f"子 Agent 失败: {result.error}"
+                return f"子 Agent [{agent_type}] 失败: {result.error}"
 
         # 并发多任务
-        specs = [SubAgentSpec(task=t, context_hint=context_hint, max_steps=max_steps) for t in tasks]
-        if on_event:
+        specs = [
+            SubAgentSpec(
+                task=t,
+                context_hint=context_hint,
+                max_steps=max_steps,
+                agent_type=agent_type,
+                mode=mode,
+            )
+            for t in tasks
+        ]
+
+        # For fork mode with multiple tasks, each task gets its own fork_messages
+        if mode == "fork" and fork_message_lists:
+            # Run each subagent with its own fork messages
+            results = []
             for i, spec in enumerate(specs):
-                on_event("task_start", i, task_name=spec.task[:50])
-        results = run_parallel(specs, agent, on_event=on_event, max_workers=max_workers)
+                if on_event:
+                    on_event("task_start", i, task_name=spec.task[:50])
+                fm = fork_message_lists[i] if i < len(fork_message_lists) else None
+                sub = SubAgent(agent, spec, on_event=on_event, task_index=i, fork_messages=fm)
+                results.append(sub.run())
+        else:
+            if on_event:
+                for i, spec in enumerate(specs):
+                    on_event("task_start", i, task_name=spec.task[:50])
+            results = run_parallel(specs, agent, on_event=on_event, max_workers=max_workers)
 
         output_parts = []
         for i, r in enumerate(results):
+            token_info = f" | {r.tokens} tokens" if r.tokens else ""
             if r.success:
-                status = f"✓ 完成 | {r.steps} 步 | {r.elapsed:.1f}s"
+                status = f"✓ 完成 | {r.steps} 步 | {r.elapsed:.1f}s{token_info}"
             else:
                 status = f"✗ 失败: {r.error}"
             output_parts.append(f"### 任务 {i + 1}: {specs[i].task[:50]}\n{status}\n{r.output}")

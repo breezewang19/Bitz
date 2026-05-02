@@ -46,6 +46,7 @@ class SubAgentResult:
     steps: int = 0
     elapsed: float = 0.0
     error: str | None = None
+    tokens: int = 0
 
 
 @dataclass
@@ -55,6 +56,8 @@ class SubAgentSpec:
     context_hint: str = ""
     max_steps: int = 10
     model: str | None = None
+    mode: str = "independent"           # "independent" | "fork"
+    agent_type: str = "general-purpose"  # key into BUILTIN_AGENTS
 
 
 class SubAgent:
@@ -67,12 +70,40 @@ class SubAgent:
         on_status: Callable[[str, str], None] | None = None,
         on_event: Callable | None = None,
         task_index: int = 0,
+        fork_messages: list[dict] | None = None,
     ) -> None:
+        import dataclasses
+        import os
+        import sys
+
+        from agent.agent_definition import BUILTIN_AGENTS, RuntimeInfo
+        from agent.fork_message_builder import ForkMessageBuilder
+        from agent.prompt import build_system_prompt
+
         self._spec = spec
         self._on_status = on_status
         self._on_event = on_event
         self._task_index = task_index
         self._task_id = str(id(self))
+
+        # Look up agent definition
+        agent_def = BUILTIN_AGENTS.get(spec.agent_type, BUILTIN_AGENTS["general-purpose"])
+
+        # Fork mode safety checks
+        if spec.mode == "fork":
+            # Check for recursive fork
+            parent_messages = getattr(parent_agent, 'context', None)
+            if parent_messages is not None:
+                parent_messages = getattr(parent_messages, 'messages', [])
+            else:
+                parent_messages = []
+            if ForkMessageBuilder.is_fork_child(parent_messages):
+                raise ValueError("Cannot fork from a fork child. Use independent mode instead.")
+            # Enforce model inheritance for cache sharing
+            if spec.model is not None:
+                import warnings
+                warnings.warn("Fork mode requires inheriting parent model; overriding model=None")
+                spec = dataclasses.replace(spec, model=None)
 
         # 继承父的 LLM 配置
         parent_llm = parent_agent.llm_adapter
@@ -84,30 +115,55 @@ class SubAgent:
             protocol=parent_llm.protocol,
         )
 
-        # 继承父的工具池（去掉 spawn 防递归）
-        self._tools = ToolRegistry()
-        for name, tool in parent_agent.tools.tools.items():
-            if name != "spawn":
-                self._tools.tools[name] = tool
+        # Filter tools based on agent definition
+        self._tools = parent_agent.tools.filter_for_agent(agent_def)
 
-        # 独立上下文：仅含 system prompt + 任务消息
-        parent_ctx = parent_agent.context
-        self._context = Context(system_prompt=parent_ctx.system_prompt)
+        # Build system prompt
+        runtime_info = RuntimeInfo(
+            working_dir=os.getcwd(),
+            platform=sys.platform,
+            shell=os.environ.get("SHELL", "/bin/sh"),
+            skill_summary=None,
+        )
 
-        # 任务消息
-        task_content = spec.task
-        if spec.context_hint:
-            task_content = f"{spec.task}\n\n---\n参考上下文:\n{spec.context_hint}"
-        self._context.add_user(task_content)
+        if agent_def.get_system_prompt:
+            system_prompt = agent_def.get_system_prompt(runtime_info)
+        else:
+            system_prompt = build_system_prompt(agent_def=agent_def, runtime_info=runtime_info)
 
-        # 创建独立 Agent
+        # Create context
+        if fork_messages is not None:
+            # Fork mode: use pre-built messages
+            self._context = Context(system_prompt=system_prompt)
+            for msg in fork_messages:
+                self._context.messages.append(msg)
+        else:
+            # Independent mode: standard task message
+            self._context = Context(system_prompt=system_prompt)
+            user_content = spec.task
+            if spec.context_hint:
+                user_content = f"{spec.context_hint}\n\n{spec.task}"
+            self._context.add_user(user_content)
+
+        # Determine max_steps: use spec if explicitly set (not default 10), else agent_def
+        if spec.max_steps != 10:
+            max_steps = spec.max_steps
+        else:
+            max_steps = agent_def.max_steps
+
+        # Create agent
         self._agent = Agent(
             llm_adapter=self._llm,
             tools=self._tools,
             context=self._context,
-            max_steps=spec.max_steps,
+            max_steps=max_steps,
         )
         self._agent.auto_confirm = True
+        # Set permission_mode for readonly enforcement
+        self._agent.permission_mode = agent_def.permission_mode
+
+        # Token accumulation
+        self._token_usage = 0
 
         # 注入 _on_text 回调
         if self._on_event:
@@ -144,11 +200,22 @@ class SubAgent:
             elapsed = time.monotonic() - start
             if self._on_status:
                 self._on_status(self._task_id, "done")
+
+            # Accumulate token usage from LLM adapter
+            token_usage = 0
+            try:
+                usage = self._llm._last_usage
+                if usage:
+                    token_usage = getattr(usage, 'input_tokens', 0) + getattr(usage, 'output_tokens', 0)
+            except Exception:
+                pass
+
             result = SubAgentResult(
                 success=True,
                 output=result_text or "",
                 steps=self._agent._step_count,
                 elapsed=elapsed,
+                tokens=token_usage,
             )
         except LLMError as e:
             elapsed = time.monotonic() - start

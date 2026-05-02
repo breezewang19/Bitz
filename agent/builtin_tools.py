@@ -39,6 +39,18 @@ SPAWN_TOOL_DEF = {
                 "description": "最大并发数，默认 3。",
                 "default": 3,
             },
+            "agent_type": {
+                "type": "string",
+                "default": "general-purpose",
+                "enum": ["general-purpose", "explore", "plan"],
+                "description": "子 Agent 类型，决定可用工具和权限。general-purpose: 全部工具; explore: 只读探索; plan: 只读规划。",
+            },
+            "mode": {
+                "type": "string",
+                "enum": ["independent", "fork"],
+                "default": "independent",
+                "description": "执行模式: independent (独立上下文) 或 fork (共享父 prompt cache)。",
+            },
         },
     },
 }
