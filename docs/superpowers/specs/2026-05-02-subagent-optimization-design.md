@@ -10,7 +10,7 @@ New file: `agent/agent_definition.py`
 
 ```python
 @dataclass
-class AgentContext:
+class RuntimeInfo:
     working_dir: str
     platform: str
     shell: str
@@ -22,27 +22,31 @@ class AgentDefinition:
     description: str                             # Description shown to the LLM
     disallowed_tools: list[str]                  # Denylist (safer than allowlist)
     model: str | None                            # None = inherit parent model
-    get_system_prompt: Callable[[AgentContext], str] | None  # Dynamic prompt builder
+    get_system_prompt: Callable[[RuntimeInfo], str] | None = None  # Dynamic prompt builder; if None, use build_system_prompt()
     omit_claude_md: bool = False                 # Skip CLAUDE.md rules injection
-    omit_git_status: bool = False                # Skip git status injection
     max_steps: int = 10                          # Default max steps
-    background: bool = False                     # Run asynchronously
-    permission_mode: str = "auto"                # "auto" | "bubble" | "readonly"
+    permission_mode: str = "auto"                # "auto" | "readonly"
 ```
+
+**Removed fields**: `background` (not specified in this phase), `omit_git_status` (no git status injection exists in current `build_system_prompt()`).
+
+**Renamed `AgentContext` → `RuntimeInfo`**: Avoids collision with existing `Context` class in `agent/context.py` that manages conversation messages.
+
+**`get_system_prompt` vs `build_system_prompt` interaction**: If `get_system_prompt` is provided, it completely replaces `build_system_prompt()`. If `None` (default), `build_system_prompt()` is called with the `AgentDefinition` for conditional section injection. These are mutually exclusive — never both applied.
 
 ### Built-in Agent Definitions
 
-| Agent | disallowed_tools | model | omit_claude_md | omit_git_status | permission_mode |
-|-------|-----------------|-------|----------------|-----------------|-----------------|
-| general-purpose | [] | None (inherit) | False | False | auto |
-| explore | [write_file, edit_file, spawn] | None (inherit) | True | True | readonly |
-| plan | [write_file, edit_file, spawn] | None (inherit) | True | True | readonly |
+| Agent | disallowed_tools | model | omit_claude_md | permission_mode |
+|-------|-----------------|-------|----------------|-----------------|
+| general-purpose | [] | None (inherit) | False | auto |
+| explore | [write_file, edit_file, spawn] | None (inherit) | True | readonly |
+| plan | [write_file, edit_file, spawn] | None (inherit) | True | readonly |
 
 ### Design Decisions
 
 - **Denylist over allowlist**: New tools are available by default; explicit exclusion is safer than explicit inclusion. This matches Claude Code's `disallowedTools` pattern.
 - **`model: None` means inherit**: Fork subagents must inherit the parent's model to share prompt cache. A different model cannot reuse the parent's cache.
-- **`get_system_prompt(context)`**: Dynamic prompt construction allows agents to adapt to runtime configuration (skills, environment), matching Claude Code's `getSystemPrompt({ toolUseContext })` pattern.
+- **`get_system_prompt(context)`**: Dynamic prompt construction allows agents to adapt to runtime configuration (skills, environment), matching Claude Code's `getSystemPrompt({ toolUseContext })` pattern. If provided, it completely replaces `build_system_prompt()`; if `None`, `build_system_prompt()` is called with the `AgentDefinition` for conditional section injection.
 
 ## 2. Fork Mode Message Construction
 
@@ -97,12 +101,26 @@ class ForkMessageBuilder:
         # 4. Return one message list per directive
 ```
 
+**Integration point**: `ForkMessageBuilder` is called from `_execute_spawn()` in `agent/tools.py`. When `mode="fork"`, the method extracts `parent_agent.context.messages` and the last assistant message, then calls `build_forked_messages()` to construct per-child message lists. These lists are passed to `SubAgent.__init__()` via a new `fork_messages` parameter, bypassing the normal "system prompt + task message" construction.
+
+### Prerequisite: LLMAdapter Cache Control Support
+
+Fork mode prompt cache sharing requires the `LLMAdapter` to support Anthropic's `cache_control` markers. The current `LLMAdapter._chat_once()` passes the system prompt as a plain string and creates a new client per call. Required changes in `agent/adapter.py`:
+
+1. Pass system prompt as a list of content blocks with `cache_control: {"type": "ephemeral"}` on the last block.
+2. Pass tool definitions with `cache_control` markers on the last tool.
+3. Reuse the `anthropic.Anthropic()` client instance across calls (connection pooling).
+
+Without these changes, fork mode message structure alignment alone will not achieve prompt cache hits.
+
 ### Safety Guards
 
-1. **Recursive fork prevention**: Detect fork boilerplate tag in messages; refuse to fork again if already a fork child.
-2. **Model inheritance**: Fork children MUST use the parent's model (different models can't share cache).
+1. **Recursive fork prevention**: `_execute_spawn()` checks if the parent agent's messages contain `<FORK_BOILERPLATE_TAG>`. If found, returns an error: "Cannot fork from a fork child. Use independent mode instead."
+2. **Model inheritance enforcement**: If `mode="fork"` and `model` is explicitly set to a different value, override `model` to `None` (inherit) and log a warning. Fork children must use the parent's model for cache sharing.
 3. **Exact tool definitions**: Fork children use the parent's exact tool schemas (`use_exact_tools=True`) for byte-identical API prefixes.
 4. **Incomplete tool call filtering**: Remove assistant messages with tool_use blocks that lack corresponding tool_result blocks to prevent API errors.
+5. **Empty conversation fallback**: If the parent conversation is empty (first turn) or the last assistant message has no tool_use blocks, silently degrade to independent mode — fork mode requires a parent assistant message with tool_use blocks to construct shared placeholders.
+6. **Context stripping for forks**: Fork children inherit the parent's full conversation history. This is by design (it's what enables cache sharing), but the spec acknowledges that sensitive information in the parent's conversation will be visible to fork children. This matches Claude Code's fork behavior.
 
 ### Fork Boilerplate
 
@@ -130,7 +148,6 @@ Task: {directive}
 Based on `AgentDefinition` flags:
 
 1. `omit_claude_md = True` → Skip CLAUDE.md rule injection. Read-only agents don't need write-code rules. Saves ~5-15K tokens per invocation.
-2. `omit_git_status = True` → Skip git status injection. Read-only agents can run `git status` themselves if needed. Saves up to ~40KB of stale state.
 
 ### Implementation
 
@@ -139,14 +156,12 @@ Modify `build_system_prompt()` to accept an `AgentDefinition` parameter and cond
 ```python
 def build_system_prompt(
     agent_def: AgentDefinition | None = None,
-    context: AgentContext | None = None
+    context: RuntimeInfo | None = None
 ) -> str:
     sections = [PERSONA, RULES]
     if not agent_def or not agent_def.omit_claude_md:
         sections.append(claude_md_rules)
     sections.append(build_environment_section(context))
-    if not agent_def or not agent_def.omit_git_status:
-        sections.append(git_status_section)
     if context and context.skill_summary:
         sections.append(skill_summary_section)
     return "\n\n".join(sections)
@@ -165,35 +180,34 @@ New `AgentDefinition.permission_mode` field:
 | Mode | Behavior |
 |------|----------|
 | `"auto"` | Current behavior: auto-confirm all dangerous operations |
-| `"bubble"` | Dangerous operations reported to parent agent via event callback for user confirmation |
-| `"readonly"` | All write operations blocked (write_file, edit_file, dangerous bash commands) |
+| `"readonly"` | Only allowlisted bash commands pass; write_file/edit_file blocked |
+
+**Removed `"bubble"` mode**: Implementing synchronous permission prompts from a thread-based subagent requires a blocking mechanism (e.g., `threading.Event`) that adds significant complexity. This can be added in a future phase if needed.
 
 ### Implementation
 
 - Explore/Plan agents default to `"readonly"` mode
 - General-purpose agent defaults to `"auto"` mode
-- `"bubble"` mode emits a `permission_request` event that the parent agent's TUI handles
 
 ### Tool Filtering
 
 Current: only `spawn` is removed from child tool registry.
 
-Optimized: filter based on `AgentDefinition.disallowed_tools` using denylist pattern:
+Optimized: filter based on `AgentDefinition.disallowed_tools`. The `ToolRegistry` class does not have `copy()`/`remove()` methods, so filtering creates a new registry:
 
 ```python
 def filter_tools_for_agent(
-    tools: ToolRegistry,
+    parent_tools: ToolRegistry,
     agent_def: AgentDefinition
 ) -> ToolRegistry:
-    filtered = tools.copy()
-    for tool_name in agent_def.disallowed_tools:
-        filtered.remove(tool_name)
+    filtered = ToolRegistry()
+    for name, tool in parent_tools.tools.items():
+        if name not in agent_def.disallowed_tools:
+            filtered.register(name, tool["fn"], tool["schema"])
     return filtered
 ```
 
-For `"readonly"` permission mode, additionally block:
-- `write_file`, `edit_file`
-- Bash commands matching dangerous patterns (rm, pip install, etc.)
+For `"readonly"` permission mode, bash command execution uses an **allowlist** approach (inverted from the denylist used for tool filtering). Only commands matching the existing `READONLY_COMMANDS` whitelist (ls, cat, head, tail, grep, find, git, etc.) are permitted. This is more secure than trying to enumerate all dangerous patterns, as it prevents creative bypasses like `echo 'malicious' > /tmp/exploit.py && python /tmp/exploit.py`.
 
 ## 5. UI Enhancements
 
@@ -234,7 +248,8 @@ Parallel task grouped display:
 
 New event types:
 - `progress_summary(task_index, summary)` — grouped progress summary
-- `token_count(task_index, count)` — token usage tracking
+
+**Token counting**: Add `tokens: int` field to `SubAgentResult`. The `SubAgent.run()` method accumulates token usage from each `LLMAdapter` call by reading `llm_adapter.last_usage` after each step and summing the totals.
 
 ## 6. Spawn Tool Interface Changes
 
@@ -281,7 +296,9 @@ Add a "Writing the prompt" section that teaches the parent agent how to write ef
 
 ### Static/Dynamic Separation
 
-Separate the static tool description from the dynamic agent list. The agent list is injected via a system-reminder attachment rather than embedded in the tool description. This prevents prompt cache busts when agent types change.
+Separate the static tool description from the dynamic agent list. The agent list is injected via a system-reminder message appended to the conversation (a user-role message with a `<system-reminder>` tag containing the available agent types and their descriptions). This prevents prompt cache busts when agent types change — the tool schema stays static while the reminder can change freely.
+
+**Implementation**: In `_execute_spawn()`, before the LLM call, check if the agent list has changed since the last injection. If so, append a new system-reminder message with the current agent list. The spawn tool's description remains static (just the parameter schema and usage notes).
 
 ### Parallel Execution Guidance
 
@@ -294,11 +311,12 @@ When multiple independent tasks are present, explicitly recommend using `tasks` 
 
 | File | Change |
 |------|--------|
-| `agent/agent_definition.py` | NEW — AgentDefinition, AgentContext, built-in definitions |
+| `agent/agent_definition.py` | NEW — AgentDefinition, RuntimeInfo, built-in definitions |
 | `agent/fork_message_builder.py` | NEW — ForkMessageBuilder for prompt cache sharing |
-| `agent/subagent.py` | MODIFY — Accept AgentDefinition, support fork mode, context stripping |
+| `agent/adapter.py` | MODIFY — Add cache_control markers, client reuse for prompt cache support |
+| `agent/subagent.py` | MODIFY — Accept AgentDefinition, support fork mode, context stripping, token accumulation |
 | `agent/prompt.py` | MODIFY — Conditional section injection based on AgentDefinition |
-| `agent/tools.py` | MODIFY — Spawn tool schema, agent_type/mode params, tool filtering |
+| `agent/tools.py` | MODIFY — Spawn tool schema, agent_type/mode params, tool filtering, fork message integration |
 | `agent/builtin_tools.py` | MODIFY — Enhanced spawn tool description with prompt guide |
 | `tui/widgets/chat.py` | MODIFY — SubAgentCard enhancements (stats, grouping) |
 | `tui/app.py` | MODIFY — Event handling for new event types |
@@ -307,8 +325,18 @@ When multiple independent tasks are present, explicitly recommend using `tasks` 
 
 1. AgentDefinition data model + built-in definitions
 2. Selective context stripping in `build_system_prompt()`
-3. Tool filtering based on `disallowed_tools` + permission scoping
-4. Fork mode message construction
-5. Spawn tool interface changes (agent_type, mode params)
-6. Agent prompt optimization (writing guide, static/dynamic separation)
-7. UI enhancements (progress grouping, completion stats, terminal adaptation)
+3. Tool filtering based on `disallowed_tools` + readonly permission mode
+4. LLMAdapter cache control support (`agent/adapter.py`)
+5. Fork mode message construction + ForkMessageBuilder
+6. Spawn tool interface changes (agent_type, mode params)
+7. Agent prompt optimization (writing guide, static/dynamic separation)
+8. UI enhancements (progress grouping, completion stats, terminal adaptation)
+
+## 10. Backward Compatibility
+
+The spawn tool interface changes are fully backward-compatible:
+
+- `agent_type` defaults to `"general-purpose"` — existing calls that omit this parameter get the same behavior as before.
+- `mode` defaults to `"independent"` — existing calls that omit this parameter get the same behavior as before.
+- The `_execute_spawn()` method in `tools.py` handles the case where these fields are absent by using defaults.
+- Existing `SubAgentSpec` fields (`task`, `tasks`, `context_hint`, `max_steps`, `max_workers`) are unchanged.
