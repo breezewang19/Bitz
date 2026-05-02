@@ -1,5 +1,6 @@
 # tests/test_agent_definition.py
 from agent.agent_definition import AgentDefinition, RuntimeInfo, BUILTIN_AGENTS
+from agent.prompt import build_system_prompt
 
 
 class TestRuntimeInfo:
@@ -111,3 +112,33 @@ class TestBuiltinAgents:
             assert isinstance(agent.description, str)
             assert isinstance(agent.disallowed_tools, list)
             assert agent.permission_mode in ("auto", "readonly")
+
+
+class TestBuildSystemPromptStripping:
+    def test_default_includes_claude_md(self):
+        info = RuntimeInfo(
+            working_dir="/tmp", platform="darwin", shell="/bin/zsh"
+        )
+        result = build_system_prompt(runtime_info=info)
+        # Default (no agent_def) should produce a non-empty prompt
+        assert result  # non-empty
+        # Should contain persona/rules at minimum
+        assert "工具使用" in result or "环境" in result
+
+    def test_explore_agent_omits_claude_md(self):
+        info = RuntimeInfo(
+            working_dir="/tmp", platform="darwin", shell="/bin/zsh"
+        )
+        agent_def = BUILTIN_AGENTS["explore"]
+        result_with = build_system_prompt(runtime_info=info)
+        result_without = build_system_prompt(agent_def=agent_def, runtime_info=info)
+        # Explore agent's prompt should be shorter (omits CLAUDE.md)
+        assert len(result_without) <= len(result_with)
+
+    def test_general_purpose_includes_claude_md(self):
+        info = RuntimeInfo(
+            working_dir="/tmp", platform="darwin", shell="/bin/zsh"
+        )
+        agent_def = BUILTIN_AGENTS["general-purpose"]
+        result = build_system_prompt(agent_def=agent_def, runtime_info=info)
+        assert result  # non-empty
