@@ -67,7 +67,11 @@ _READONLY_NPM_SUBCOMMANDS = {
 }
 
 _REDIRECT_PATTERN = re.compile(
-    r'[|>`]'  # pipe, redirect, or backtick — could chain dangerous commands
+    r'[|>`;]'  # pipe, redirect, backtick, semicolon — could chain dangerous commands
+)
+
+_COMMAND_SUBSTITUTION_PATTERN = re.compile(
+    r'\$\('  # $(...) command substitution
 )
 
 
@@ -77,8 +81,8 @@ def _is_readonly_command(cmd: str) -> bool:
     if not cmd:
         return True
 
-    # Block commands with pipes, redirects, or backticks
-    if _REDIRECT_PATTERN.search(cmd):
+    # Block commands with pipes, redirects, backticks, semicolons, or command substitution
+    if _REDIRECT_PATTERN.search(cmd) or _COMMAND_SUBSTITUTION_PATTERN.search(cmd):
         return False
 
     parts = cmd.split()
@@ -313,14 +317,10 @@ class ToolRegistry:
 
         # For fork mode with multiple tasks, each task gets its own fork_messages
         if mode == "fork" and fork_message_lists:
-            # Run each subagent with its own fork messages
-            results = []
-            for i, spec in enumerate(specs):
-                if on_event:
+            if on_event:
+                for i, spec in enumerate(specs):
                     on_event("task_start", i, task_name=spec.task[:50])
-                fm = fork_message_lists[i] if i < len(fork_message_lists) else None
-                sub = SubAgent(agent, spec, on_event=on_event, task_index=i, fork_messages=fm)
-                results.append(sub.run())
+            results = run_parallel(specs, agent, on_event=on_event, max_workers=max_workers, fork_messages_list=fork_message_lists)
         else:
             if on_event:
                 for i, spec in enumerate(specs):

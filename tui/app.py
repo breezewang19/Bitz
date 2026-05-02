@@ -89,7 +89,7 @@ class BitzApp(App):
                 tasks = args.get("tasks", []) if isinstance(args, dict) else []
                 task_desc = (args.get("task", "") if isinstance(args, dict) else "") or f"{len(tasks)} 个并发任务"
                 count = 1 if (args.get("task", "") if isinstance(args, dict) else "") else len(tasks)
-                card = SubAgentCard(task=task_desc, count=count)
+                card = SubAgentCard(task=task_desc, count=count, agent_type=args.get("agent_type", "general-purpose") if isinstance(args, dict) else "general-purpose")
                 chat = app.query_one(ChatLog)
                 app.call_from_thread(chat.mount, card)
                 app._subagent_card = card
@@ -111,7 +111,8 @@ class BitzApp(App):
                             app.call_from_thread(
                                 card.complete_task, task_index,
                                 kwargs.get("success", False), kwargs.get("steps", 0),
-                                kwargs.get("elapsed", 0.0), kwargs.get("error", "")
+                                kwargs.get("elapsed", 0.0), kwargs.get("error", ""),
+                                tokens=kwargs.get("tokens", 0)
                             )
                     except Exception:
                         pass

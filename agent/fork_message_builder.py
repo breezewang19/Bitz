@@ -32,9 +32,14 @@ class ForkMessageBuilder:
 
         # Extract tool_use IDs from the assistant message
         tool_use_ids = []
-        if isinstance(assistant_msg.get("content"), list):
-            for block in assistant_msg["content"]:
-                if block.get("type") == "tool_use":
+        content = assistant_msg.get("content", [])
+        # Handle both string content and list-of-blocks content
+        if isinstance(content, str):
+            # No tool_use blocks in a string-only message
+            pass
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
                     tool_use_ids.append(block["id"])
 
         # Build shared placeholder tool_results (identical across all forks)

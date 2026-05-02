@@ -133,10 +133,12 @@ class SubAgent:
 
         # Create context
         if fork_messages is not None:
-            # Fork mode: use pre-built messages
+            # Fork mode: use pre-built messages (filter out system messages —
+            # system prompt is set via Context, not embedded in messages)
             self._context = Context(system_prompt=system_prompt)
             for msg in fork_messages:
-                self._context.messages.append(msg)
+                if msg.get("role") != "system":
+                    self._context.messages.append(msg)
         else:
             # Independent mode: standard task message
             self._context = Context(system_prompt=system_prompt)
@@ -162,8 +164,21 @@ class SubAgent:
         # Set permission_mode for readonly enforcement
         self._agent.permission_mode = agent_def.permission_mode
 
-        # Token accumulation
+        # Token accumulation: wrap llm.chat to accumulate usage across all steps
         self._token_usage = 0
+        original_chat = self._llm.chat
+
+        def accumulating_chat(*args, **kwargs):
+            resp = original_chat(*args, **kwargs)
+            try:
+                usage = self._llm._last_usage
+                if usage:
+                    self._token_usage += getattr(usage, 'input_tokens', 0) + getattr(usage, 'output_tokens', 0)
+            except Exception:
+                pass
+            return resp
+
+        self._llm.chat = accumulating_chat
 
         # 注入 _on_text 回调
         if self._on_event:
@@ -201,21 +216,12 @@ class SubAgent:
             if self._on_status:
                 self._on_status(self._task_id, "done")
 
-            # Accumulate token usage from LLM adapter
-            token_usage = 0
-            try:
-                usage = self._llm._last_usage
-                if usage:
-                    token_usage = getattr(usage, 'input_tokens', 0) + getattr(usage, 'output_tokens', 0)
-            except Exception:
-                pass
-
             result = SubAgentResult(
                 success=True,
                 output=result_text or "",
                 steps=self._agent._step_count,
                 elapsed=elapsed,
-                tokens=token_usage,
+                tokens=self._token_usage,
             )
         except LLMError as e:
             elapsed = time.monotonic() - start
@@ -241,7 +247,7 @@ class SubAgent:
             )
 
         if self._on_event:
-            self._on_event("done", self._task_index, success=result.success, steps=result.steps, elapsed=result.elapsed, error=result.error or "")
+            self._on_event("done", self._task_index, success=result.success, steps=result.steps, elapsed=result.elapsed, error=result.error or "", tokens=result.tokens)
         return result
 
 
@@ -252,12 +258,16 @@ def run_parallel(
     on_status: Callable[[str, str], None] | None = None,
     on_event: Callable | None = None,
     max_workers: int = 3,
+    fork_messages_list: list[list[dict] | None] | None = None,
 ) -> list[SubAgentResult]:
     """并发执行多个子 Agent 任务"""
     results: dict[int, SubAgentResult] = {}
 
     def _run_one(spec: SubAgentSpec, idx: int) -> tuple[int, SubAgentResult]:
-        sub = SubAgent(parent_agent, spec, on_status=on_status, on_event=on_event, task_index=idx)
+        fork_msgs = None
+        if fork_messages_list and idx < len(fork_messages_list):
+            fork_msgs = fork_messages_list[idx]
+        sub = SubAgent(parent_agent, spec, on_status=on_status, on_event=on_event, task_index=idx, fork_messages=fork_msgs)
         result = sub.run(cancel_event=cancel_event)
         return idx, result
 
