@@ -273,11 +273,12 @@ class SubAgentCard(Static):
     }
     """
 
-    def __init__(self, task: str, count: int = 1) -> None:
+    def __init__(self, task: str, count: int = 1, agent_type: str = "general-purpose") -> None:
         super().__init__()
         self._task_desc = task
         self._count = count
-        self._task_summaries: list[dict] = []  # [{name, status, steps, elapsed, error}]
+        self._agent_type = agent_type
+        self._task_summaries: list[dict] = []  # [{name, status, steps, elapsed, error, tokens}]
         self._task_logs: dict[int, Static] = {}  # task_index → log Static
         self._task_collapse: dict[int, Collapsible] = {}  # task_index → Collapsible
         self._header: Static | None = None
@@ -289,8 +290,9 @@ class SubAgentCard(Static):
 
     def _render_header(self) -> Text:
         done = sum(1 for t in self._task_summaries if t["status"] == "done")
+        type_name = self._agent_type.replace("-", " ").title()
         return Text.assemble(
-            Text(f"SubAgent ({done}/{self._count}): ", style=COLORS["tool"]),
+            Text(f"{type_name} Agent ({done}/{self._count}): ", style=COLORS["tool"]),
             Text(self._task_desc, style=COLORS["muted"]),
         )
 
@@ -310,21 +312,31 @@ class SubAgentCard(Static):
             current = getattr(log, '_content', '') or ''
             # _content might be a string or Rich Text; handle both
             if isinstance(current, str):
-                new_content = current + "\n" + line if current else line
+                display_line = line
+                if self._is_compact_terminal() and len(line) > 80:
+                    display_line = line[:77] + "..."
+                new_content = current + "\n" + display_line if current else display_line
             else:
                 new_content = line  # fallback
             log.update(new_content)
 
-    def complete_task(self, task_index: int, success: bool, steps: int, elapsed: float, error: str = "") -> None:
+    def complete_task(self, task_index: int, success: bool, steps: int, elapsed: float, error: str = "", tokens: int = 0) -> None:
         """标记任务完成，折叠其日志，更新 header"""
         if task_index < len(self._task_summaries):
             self._task_summaries[task_index]["status"] = "done"
+            self._task_summaries[task_index]["tokens"] = tokens
             self._done += 1
 
         if task_index in self._task_collapse:
             icon = "✓" if success else "✗"
             if success:
-                summary = f"{steps}步 {elapsed:.1f}s"
+                parts = [f"{steps}步", f"{elapsed:.1f}s"]
+                if tokens > 0:
+                    if tokens >= 1000:
+                        parts.append(f"~{tokens/1000:.1f}K tokens")
+                    else:
+                        parts.append(f"{tokens} tokens")
+                summary = " · ".join(parts)
                 title = f"{icon} {self._task_summaries[task_index]['name']}  {summary}"
             else:
                 title = f"{icon} {self._task_summaries[task_index]['name']}  {error}"
@@ -340,4 +352,13 @@ class SubAgentCard(Static):
         idx = len(self._task_summaries)
         task_name = f"任务{idx + 1}"
         self.add_task(idx, task_name)
-        self.complete_task(idx, success=result.success, steps=result.steps, elapsed=result.elapsed, error=result.error or "")
+        self.complete_task(idx, success=result.success, steps=result.steps, elapsed=result.elapsed, error=result.error or "", tokens=getattr(result, 'tokens', 0))
+
+    def _is_compact_terminal(self) -> bool:
+        """Check if terminal is too small for full display (< 40 rows)."""
+        try:
+            import shutil
+            size = shutil.get_terminal_size()
+            return size.lines < 40
+        except Exception:
+            return False
