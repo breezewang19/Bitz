@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Literal
+
+PermissionMode = Literal["auto", "readonly"]
 
 
 @dataclass
@@ -22,7 +24,7 @@ class AgentDefinition:
     get_system_prompt: Callable[[RuntimeInfo], str] | None = None
     omit_claude_md: bool = False
     max_steps: int = 10
-    permission_mode: str = "auto"  # "auto" | "readonly"
+    permission_mode: PermissionMode = "auto"
 
 
 BUILTIN_AGENTS: dict[str, AgentDefinition] = {

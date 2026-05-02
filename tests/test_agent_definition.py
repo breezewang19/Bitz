@@ -1,5 +1,4 @@
 # tests/test_agent_definition.py
-import pytest
 from agent.agent_definition import AgentDefinition, RuntimeInfo, BUILTIN_AGENTS
 
 
