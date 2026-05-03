@@ -278,6 +278,11 @@ class SubAgentCard(Static):
         width: 100%;
         overflow-x: hidden;
     }
+    SubAgentCard CopyButton {
+        dock: right;
+        height: 1;
+        width: 3;
+    }
     """
 
     def __init__(self, task: str, count: int = 1, agent_type: str = "general-purpose") -> None:
@@ -287,7 +292,9 @@ class SubAgentCard(Static):
         self._agent_type = agent_type
         self._task_summaries: list[dict] = []  # [{name, status, steps, elapsed, error, tokens}]
         self._task_logs: dict[int, Static] = {}  # task_index → log Static
+        self._task_copy_btns: dict[int, CopyButton] = {}  # task_index → CopyButton
         self._task_collapse: dict[int, Collapsible] = {}  # task_index → Collapsible
+        self._task_log_text: dict[int, str] = {}  # task_index → raw log text for copy
         self._header: Static | None = None
         self._done = 0
 
@@ -306,18 +313,27 @@ class SubAgentCard(Static):
     def add_task(self, task_index: int, task_name: str) -> None:
         """开始一个新任务，创建其 Collapsible + log 区域"""
         log_widget = Static("", classes="subagent-log")
+        copy_btn = CopyButton("")
         collapse = Collapsible(log_widget, title=f"◌ {task_name}", collapsed=False)
         self._task_logs[task_index] = log_widget
+        self._task_copy_btns[task_index] = copy_btn
         self._task_collapse[task_index] = collapse
+        self._task_log_text[task_index] = ""
         self._task_summaries.append({"name": task_name, "status": "running"})
         self.mount(collapse)
+        self.mount(copy_btn)
 
     def append_log(self, task_index: int, line: str) -> None:
         """追加一行日志到指定任务的 log 区域"""
         if task_index in self._task_logs:
             log = self._task_logs[task_index]
+            # Track raw text for copy
+            raw = self._task_log_text.get(task_index, "")
+            self._task_log_text[task_index] = raw + "\n" + line if raw else line
+            # Update copy button text
+            if task_index in self._task_copy_btns:
+                self._task_copy_btns[task_index]._copy_text = self._task_log_text[task_index]
             current = getattr(log, '_content', '') or ''
-            # _content might be a string or Rich Text; handle both
             if isinstance(current, str):
                 display_line = line
                 if self._is_compact_terminal() and len(line) > 80:
@@ -368,6 +384,11 @@ class SubAgentCard(Static):
         task_name = f"任务{idx + 1}"
         self.add_task(idx, task_name)
         self.complete_task(idx, success=result.success, steps=result.steps, elapsed=result.elapsed, error=result.error or "", tokens=getattr(result, 'tokens', 0))
+
+    def on_copy_button_copied(self, event: CopyButton.Copied) -> None:
+        event.stop()
+        self.app.copy_to_clipboard(event.text)
+        self.app.notify("已复制到剪贴板", severity="information", timeout=2)
 
     def _is_compact_terminal(self) -> bool:
         """Check if terminal is too small for full display (< 40 rows)."""
