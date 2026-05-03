@@ -53,11 +53,11 @@ class StatusBar(Widget):
         # Token counts
         if self.input_tokens > 0 or self.output_tokens > 0:
             parts.append(Text(
-                f"In {self._format_tokens(self.input_tokens)}",
+                f"↓{self._format_tokens(self.input_tokens)}",
                 style=COLORS["thinking"],
             ))
             parts.append(Text(
-                f"Out {self._format_tokens(self.output_tokens)}",
+                f"↑{self._format_tokens(self.output_tokens)}",
                 style=COLORS["tool"],
             ))
 
