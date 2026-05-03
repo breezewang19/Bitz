@@ -216,13 +216,26 @@ class SubAgent:
             if self._on_status:
                 self._on_status(self._task_id, "done")
 
-            result = SubAgentResult(
-                success=True,
-                output=result_text or "",
-                steps=self._agent._step_count,
-                elapsed=elapsed,
-                tokens=self._token_usage,
-            )
+            # Detect step limit — treat as partial failure, not success
+            if self._agent._hit_step_limit:
+                if self._on_status:
+                    self._on_status(self._task_id, "error")
+                result = SubAgentResult(
+                    success=False,
+                    output=result_text or "",
+                    steps=self._agent._step_count,
+                    elapsed=elapsed,
+                    error=f"达到步数上限 ({self._agent.max_steps} 步)，任务未完成",
+                    tokens=self._token_usage,
+                )
+            else:
+                result = SubAgentResult(
+                    success=True,
+                    output=result_text or "",
+                    steps=self._agent._step_count,
+                    elapsed=elapsed,
+                    tokens=self._token_usage,
+                )
         except LLMError as e:
             elapsed = time.monotonic() - start
             if self._on_status:

@@ -342,3 +342,43 @@ def test_single_tool_no_thread_overhead():
     result = agent.run("hello")
     assert call_count == 1
     assert result == "done"
+
+
+def test_hit_step_limit_flag():
+    """Agent should set _hit_step_limit when max_steps is reached."""
+    llm = MagicMock()
+    llm.chat.return_value = LLMResponse(
+        content=[{"type": "tool_use", "id": "t1", "name": "echo", "input": {}}],
+        stop_reason="tool_use",
+    )
+    tools = MagicMock()
+    tools.execute.return_value = "result"
+
+    ctx = Context(system_prompt="test")
+    agent = Agent(llm, tools, ctx, max_steps=2)
+
+    result = agent.run("Do something")
+    assert "Error" in result
+    assert "max_steps" in result.lower()
+    assert agent._hit_step_limit is True
+
+
+def test_normal_completion_no_step_limit_flag():
+    """Agent should NOT set _hit_step_limit on normal completion."""
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        LLMResponse(
+            content=[{"type": "tool_use", "id": "t1", "name": "echo", "input": {}}],
+            stop_reason="tool_use",
+        ),
+        LLMResponse(content="done", stop_reason="end_turn"),
+    ]
+    tools = MagicMock()
+    tools.execute.return_value = "result"
+
+    ctx = Context(system_prompt="test")
+    agent = Agent(llm, tools, ctx, max_steps=5)
+
+    result = agent.run("Do something")
+    assert result == "done"
+    assert agent._hit_step_limit is False

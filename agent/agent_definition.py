@@ -39,6 +39,7 @@ BUILTIN_AGENTS: dict[str, AgentDefinition] = {
         description="Fast agent specialized for exploring codebases. Use to quickly find files by patterns, search code for keywords, or answer questions about the codebase.",
         disallowed_tools=["write_file", "edit_file", "spawn"],
         omit_claude_md=True,
+        max_steps=20,
         permission_mode="readonly",
     ),
     "plan": AgentDefinition(
@@ -46,6 +47,7 @@ BUILTIN_AGENTS: dict[str, AgentDefinition] = {
         description="Software architect agent for designing implementation plans. Use to plan implementation strategy for a task. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs.",
         disallowed_tools=["write_file", "edit_file", "spawn"],
         omit_claude_md=True,
+        max_steps=20,
         permission_mode="readonly",
     ),
 }

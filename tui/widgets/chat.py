@@ -328,7 +328,13 @@ class SubAgentCard(Static):
             self._done += 1
 
         if task_index in self._task_collapse:
-            icon = "✓" if success else "✗"
+            is_step_limit = "步数上限" in error or "步数限制" in error
+            if success:
+                icon = "✓"
+            elif is_step_limit:
+                icon = "⏱"
+            else:
+                icon = "✗"
             if success:
                 parts = [f"{steps}步", f"{elapsed:.1f}s"]
                 if tokens > 0:
@@ -338,6 +344,8 @@ class SubAgentCard(Static):
                         parts.append(f"{tokens} tokens")
                 summary = " · ".join(parts)
                 title = f"{icon} {self._task_summaries[task_index]['name']}  {summary}"
+            elif is_step_limit:
+                title = f"{icon} {self._task_summaries[task_index]['name']}  步数不足 ({steps}步)"
             else:
                 title = f"{icon} {self._task_summaries[task_index]['name']}  {error}"
             self._task_collapse[task_index].title = title

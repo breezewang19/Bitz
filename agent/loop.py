@@ -20,6 +20,7 @@ class Agent:
         self._on_text: callable = None  # 中间文字输出回调（由 TUI 设置）
         self.auto_confirm: bool = False  # 子 agent 自动确认
         self._step_count: int = 0  # 已执行步数
+        self._hit_step_limit: bool = False  # 是否因步数限制退出
         self.permission_mode: str = "auto"  # "auto" | "readonly"
 
     def run(self, user_input: str | None = None, cancel_event: threading.Event = None,
@@ -134,6 +135,7 @@ class Agent:
                 self.context.add_user("请继续输出，不要重复已说过的内容。")
                 continue
 
+        self._hit_step_limit = True
         return f"Error: Exceeded max_steps ({self.max_steps})"
 
     def confirm_pending(self, confirmed_tools: set) -> tuple:

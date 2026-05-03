@@ -301,7 +301,8 @@ class ToolRegistry:
                 token_info = f", {result.tokens} tokens" if result.tokens else ""
                 return f"子 Agent [{agent_type}] 完成（{result.steps} 步，{result.elapsed:.1f}s{token_info}）:\n{result.output}"
             else:
-                return f"子 Agent [{agent_type}] 失败: {result.error}"
+                partial = f"\n部分输出:\n{result.output}" if result.output and not result.output.startswith("Error") else ""
+                return f"子 Agent [{agent_type}] 未完成: {result.error}{partial}"
 
         # 并发多任务
         specs = [
@@ -333,7 +334,7 @@ class ToolRegistry:
             if r.success:
                 status = f"✓ 完成 | {r.steps} 步 | {r.elapsed:.1f}s{token_info}"
             else:
-                status = f"✗ 失败: {r.error}"
+                status = f"✗ 未完成: {r.error}"
             output_parts.append(f"### 任务 {i + 1}: {specs[i].task[:50]}\n{status}\n{r.output}")
 
         return "\n\n---\n\n".join(output_parts)
