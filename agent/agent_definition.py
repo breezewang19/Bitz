@@ -23,7 +23,7 @@ class AgentDefinition:
     model: str | None = None
     get_system_prompt: Callable[[RuntimeInfo], str] | None = None
     omit_claude_md: bool = False
-    max_steps: int = 10
+    max_steps: int = 50
     permission_mode: PermissionMode = "auto"
 
 

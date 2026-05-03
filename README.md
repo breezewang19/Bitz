@@ -115,7 +115,7 @@ Assistant response rendered in ChatLog with Markdown
 
 | Type | Tools | Permission | Max Steps | Description |
 |------|-------|-----------|-----------|-------------|
-| general-purpose | All | auto | 10 | Full capabilities |
+| general-purpose | All | auto | 50 | Full capabilities |
 | explore | No write_file, edit_file, spawn | readonly | 50 | Read-only codebase exploration |
 | plan | No write_file, edit_file, spawn | readonly | 50 | Architecture planning |
 
