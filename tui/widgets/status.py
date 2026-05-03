@@ -19,6 +19,7 @@ class StatusBar(Widget):
         layout: horizontal;
     }
     """
+    SEP = " │ "
 
     def __init__(self) -> None:
         super().__init__()
@@ -33,28 +34,48 @@ class StatusBar(Widget):
         yield self._label
 
     def _format_tokens(self, n: int) -> str:
+        if n >= 1_000_000:
+            return f"{n / 1_000_000:.1f}M"
         if n >= 1000:
             return f"{n / 1000:.1f}k"
         return str(n)
 
     def _render_text(self) -> Text:
-        parts = []
+        parts: list[Text] = []
+
+        # Model name
         if self.model_name:
-            parts.append(Text(f"  {self.model_name}", style=COLORS["assistant"]))
-        parts.append(Text(f"  Step: {self.step_count}", style=COLORS["muted"]))
-        # Token 计数
+            parts.append(Text(self.model_name, style=COLORS["assistant"]))
+
+        # Step count
+        parts.append(Text(f"Step {self.step_count}", style=COLORS["muted"]))
+
+        # Token counts
         if self.input_tokens > 0 or self.output_tokens > 0:
-            in_str = self._format_tokens(self.input_tokens)
-            out_str = self._format_tokens(self.output_tokens)
-            parts.append(Text(f"  In:{in_str} Out:{out_str}", style=COLORS["thinking"]))
-        # 工作目录
+            parts.append(Text(
+                f"In {self._format_tokens(self.input_tokens)}",
+                style=COLORS["thinking"],
+            ))
+            parts.append(Text(
+                f"Out {self._format_tokens(self.output_tokens)}",
+                style=COLORS["tool"],
+            ))
+
+        # Working directory
         try:
             cwd = os.getcwd()
             dir_name = os.path.basename(cwd) or cwd
-            parts.append(Text(f"  {dir_name}/", style=COLORS["tool"]))
+            parts.append(Text(dir_name + "/", style=COLORS["border"]))
         except Exception:
             pass
-        return Text.assemble(*parts)
+
+        # Join with separator
+        result = Text()
+        for i, part in enumerate(parts):
+            if i > 0:
+                result.append(self.SEP, style=COLORS["border"])
+            result.append(part)
+        return result
 
     def update_model(self, name: str) -> None:
         self.model_name = name
