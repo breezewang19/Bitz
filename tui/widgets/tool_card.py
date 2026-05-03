@@ -22,10 +22,17 @@ class ToolCard(Static):
         width: 1fr;
     }
 
+    ToolCard Collapsible .collapsible--title {
+        text-wrap: wrap;
+        width: 1fr;
+    }
+
     ToolCard .tool-output {
         color: $text-muted;
         max-height: 15;
         padding: 0 1;
+        width: 100%;
+        overflow-x: hidden;
     }
 
     ToolCard CopyButton {

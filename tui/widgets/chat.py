@@ -262,6 +262,11 @@ class SubAgentCard(Static):
     SubAgentCard Collapsible {
         width: 1fr;
     }
+
+    SubAgentCard Collapsible .collapsible--title {
+        text-wrap: wrap;
+        width: 1fr;
+    }
     SubAgentCard .subagent-header {
         color: #8be9fd;
         padding: 0 0 0 0;
@@ -270,6 +275,8 @@ class SubAgentCard(Static):
         color: $text-muted;
         max-height: 12;
         padding: 0 1;
+        width: 100%;
+        overflow-x: hidden;
     }
     """
 
