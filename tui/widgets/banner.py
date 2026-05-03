@@ -177,7 +177,14 @@ class BannerWidget(Static):
 
     def on_mount(self) -> None:
         self._render_frame()
-        self.set_interval(0.08, self._advance)
+        self._interval = self.set_interval(0.08, self._advance)
+
+    def on_resize(self, event) -> None:
+        """尺寸变化时重新渲染（滚动条出现/消失会导致宽度变化）。"""
+        if self._phase == "done":
+            self._render_done()
+        else:
+            self._render_frame()
 
     def _advance(self) -> None:
         if self._phase == "cat":
@@ -261,6 +268,14 @@ class BannerWidget(Static):
         self.update(Text("\n").join(lines))
 
     def _finish(self) -> None:
+        if self._interval is not None:
+            self._interval.stop()
+            self._interval = None
+        self._render_done()
+        self.post_message(self.BannerDone())
+
+    def _render_done(self) -> None:
+        """渲染完成态的 Banner（可重复调用以适配宽度变化）。"""
         w = self._get_inner_w()
 
         lines = []
@@ -304,7 +319,6 @@ class BannerWidget(Static):
         lines.append(Text(""))
 
         self.update(Text("\n").join(lines))
-        self.post_message(self.BannerDone())
 
 
 class GoodbyeWidget(Static):
@@ -335,9 +349,10 @@ class GoodbyeWidget(Static):
         self._render_frame()
 
     def _render_frame(self) -> None:
+        colors = _get_goodbye_colors()
         row = Text("  ")
         for i, ch in enumerate(GOODBYE_TEXT):
-            color = GOODBYE_COLORS[i]
+            color = colors[i % len(colors)]
             if i < self._lit:
                 row.append(Text(ch, style=Style(color=color, bold=True)))
             else:
