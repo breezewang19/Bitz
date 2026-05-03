@@ -735,14 +735,13 @@ class BitzApp(App):
         self._step_count += 1
         status = self.query_one(StatusBar)
         status.update_steps(self._step_count)
-        # 累积 token 使用量
-        usage = getattr(self._agent.llm_adapter, '_last_usage', None)
-        if usage:
-            try:
-                self._total_input_tokens += getattr(usage, 'input_tokens', 0) or 0
-                self._total_output_tokens += getattr(usage, 'output_tokens', 0) or 0
-            except Exception:
-                pass
+        # 累积 token 使用量（从 adapter 的累积总量读取，而非单次 _last_usage）
+        adapter = self._agent.llm_adapter
+        self._total_input_tokens = adapter._total_input_tokens
+        self._total_output_tokens = adapter._total_output_tokens
+        # 加上子 Agent 的 token（如果有的话）
+        status = self.query_one(StatusBar)
+        if self._total_input_tokens > 0 or self._total_output_tokens > 0:
             status.update_tokens(self._total_input_tokens, self._total_output_tokens)
 
     def _start_thinking_animation(self) -> None:
@@ -788,6 +787,8 @@ class BitzApp(App):
         self._step_count = 0
         self._total_input_tokens = 0
         self._total_output_tokens = 0
+        self._agent.llm_adapter._total_input_tokens = 0
+        self._agent.llm_adapter._total_output_tokens = 0
         status = self.query_one(StatusBar)
         status.update_steps(0)
         status.update_tokens(0, 0)

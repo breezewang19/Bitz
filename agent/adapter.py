@@ -41,6 +41,8 @@ class LLMAdapter:
             self.api_url = f"{base_url}/v1/messages"
         self._on_retry = on_retry  # callback(err_msg, attempt, max_retries)
         self._last_usage = None  # 最近一次 API 响应的 usage 数据
+        self._total_input_tokens = 0  # 累积 input tokens（跨所有 chat 调用）
+        self._total_output_tokens = 0  # 累积 output tokens（跨所有 chat 调用）
         self._client = None  # lazily initialized Anthropic client
 
     def _get_client(self):
@@ -247,9 +249,12 @@ class LLMAdapter:
             raise error_holder[0]
 
         response = result_holder[0]
-        # 存储 usage 数据供 TUI 读取
+        # 存储 usage 数据供 TUI 读取，同时累积到总量
         try:
             self._last_usage = response.usage
+            if self._last_usage:
+                self._total_input_tokens += getattr(self._last_usage, 'input_tokens', 0) or 0
+                self._total_output_tokens += getattr(self._last_usage, 'output_tokens', 0) or 0
         except Exception:
             self._last_usage = None
         stop_reason = response.stop_reason
@@ -405,7 +410,7 @@ class LLMAdapter:
         message = choice["message"]
         finish_reason = choice["finish_reason"]
 
-        # 存储 usage
+        # 存储 usage，同时累积到总量
         try:
             usage = resp_json.get("usage")
             if usage:
@@ -413,6 +418,8 @@ class LLMAdapter:
                     "input_tokens": usage.get("prompt_tokens", 0),
                     "output_tokens": usage.get("completion_tokens", 0),
                 })()
+                self._total_input_tokens += self._last_usage.input_tokens
+                self._total_output_tokens += self._last_usage.output_tokens
             else:
                 self._last_usage = None
         except Exception:
