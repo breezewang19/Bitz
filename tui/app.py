@@ -42,7 +42,7 @@ class BitzApp(App):
         self._skill_registry = skill_registry or SkillRegistry()
         self._original_execute = agent.tools.execute
         self._cancel_event = threading.Event()
-        self._subagent_card = None
+        self._subagent_cards: dict = {}
         self._confirmed_tools: set = set()
         self._step_count = 0
         self._thinking_task: asyncio.Task | None = None
@@ -92,7 +92,8 @@ class BitzApp(App):
                 card = SubAgentCard(task=task_desc, count=count, agent_type=args.get("agent_type", "general-purpose") if isinstance(args, dict) else "general-purpose")
                 chat = app.query_one(ChatLog)
                 app.call_from_thread(chat.mount, card)
-                app._subagent_card = card
+                card_key = f"spawn_{id(card)}"
+                app._subagent_cards[card_key] = card
 
                 def on_event(event_type, task_index, **kwargs):
                     """桥接 SubAgent 事件到 SubAgentCard"""
@@ -118,7 +119,7 @@ class BitzApp(App):
                         pass
 
                 result = original(name, args, confirmed=confirmed, tool_id=tool_id, agent=agent, on_event=on_event)
-                app._subagent_card = None
+                app._subagent_cards.pop(card_key, None)
                 return result
 
             content = format_tool_content(name, args if isinstance(args, dict) else {})
@@ -634,44 +635,41 @@ class BitzApp(App):
 
                 parts = result.split()
                 tool_id = parts[1] if len(parts) >= 2 else ""
-                pending = getattr(self._agent, '_pending_confirm', None)
-                if pending and len(pending) >= 3:
-                    _, tool_name, tool_args, _ = pending
+                pending = getattr(self._agent, '_pending_confirms', None)
+                if pending:
+                    # Show confirm prompt for the first pending tool
+                    _, tool_name, tool_args, _ = pending[0]
+                    if len(pending) > 1:
+                        tool_args = f"{len(pending)} 个操作需要确认: {tool_name} 等"
                     approved = await self._show_confirm_inline(tool_name, str(tool_args))
 
                     if approved:
-                        self._confirmed_tools.add(tool_id)
-                        # 更新已有的 ToolCard 为"已批准"
-                        self._update_tool_result(tool_name, "approved", is_error=False)
                         should_continue, exec_result = await loop.run_in_executor(
                             None,
                             self._agent.confirm_pending,
                             self._confirmed_tools,
                         )
                         if should_continue:
-                            # Continue the loop — agent will get next response
                             user_input = ""
                             skip_add_user = True
                             bar.set_busy(True)
                             continue
                         else:
-                            # Agent finished after confirmation
                             self._process_agent_result(exec_result)
                             bar.set_busy(False)
                             return
                     else:
-                        # 更新已有的 ToolCard 为"已拒绝"
+                        # Deny all pending tools
                         self._update_tool_result(tool_name, "denied", is_error=True)
-                        if tool_id and self._agent._pending_confirm:
-                            _, tname, targs, _ = self._agent._pending_confirm
+                        for tid, tname, targs, _ in pending:
                             self._agent.context.add_assistant_message([{
                                 "type": "tool_use",
-                                "id": tool_id,
+                                "id": tid,
                                 "name": tname,
                                 "input": targs,
                             }])
-                            self._agent.context.add_tool_result(tool_id, "[已拒绝] 用户拒绝了此危险操作")
-                        self._agent._pending_confirm = None
+                            self._agent.context.add_tool_result(tid, "[已拒绝] 用户拒绝了此危险操作")
+                        self._agent._pending_confirms = None
                         self._agent._pending_response = None
                         self._agent._confirmed_results = []
                         content = format_tool_content(tool_name, tool_args if isinstance(tool_args, dict) else {})

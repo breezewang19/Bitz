@@ -1,6 +1,7 @@
 # agent/loop.py
 """Agent 核心循环 - Anthropic 协议"""
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from agent.context import Context
 from agent.adapter import LLMAdapter, LLMResponse, LLMError
@@ -14,11 +15,12 @@ class Agent:
         self.tools = tools
         self.context = context
         self.max_steps = max_steps
-        self._pending_confirm: tuple = None  # (tool_id, tool_name, tool_args, result)
+        self._pending_confirms: list = None  # list of (tool_id, tool_name, tool_args, result)
         self._confirmed_results: list = []   # 已确认但未写入上下文的工具结果
         self._on_text: callable = None  # 中间文字输出回调（由 TUI 设置）
         self.auto_confirm: bool = False  # 子 agent 自动确认
         self._step_count: int = 0  # 已执行步数
+        self.permission_mode: str = "auto"  # "auto" | "readonly"
 
     def run(self, user_input: str | None = None, cancel_event: threading.Event = None,
             confirmed_tools: set = None, skip_add_user: bool = False) -> str:
@@ -44,6 +46,9 @@ class Agent:
             except LLMError as e:
                 return f"[LLM Error] {e}"
 
+            if cancel_event and cancel_event.is_set():
+                return "[LLM Error] 已中断"
+
             if response.stop_reason == "end_turn":
                 self.context.add_assistant_text(response.content)
                 return response.content
@@ -65,7 +70,9 @@ class Agent:
                 confirmed_results = []
                 self._step_count += 1
 
-                for tool_use in tool_blocks:
+                if len(tool_blocks) == 1:
+                    # Single tool: execute inline (backward compat, no thread overhead)
+                    tool_use = tool_blocks[0]
                     tool_name = tool_use["name"]
                     tool_args = tool_use["input"]
                     tool_id = tool_use["id"]
@@ -75,20 +82,46 @@ class Agent:
 
                     if result.startswith("[CONFIRM_REQUIRED]") and not confirmed:
                         if self.auto_confirm:
-                            # 子 agent 自动确认：重新执行并标记为已确认
                             result = self.tools.execute(tool_name, tool_args, confirmed=True, tool_id=tool_id, on_event=None)
                             confirmed_results.append((tool_id, tool_name, tool_args, result))
                         else:
                             pending_tools.append((tool_id, tool_name, tool_args, result))
                     else:
                         confirmed_results.append((tool_id, tool_name, tool_args, result))
+                else:
+                    # Multiple tools: execute concurrently
+                    tool_id_order = {tu["id"]: i for i, tu in enumerate(tool_blocks)}
+
+                    def _execute_one(tu):
+                        tool_name = tu["name"]
+                        tool_args = tu["input"]
+                        tool_id = tu["id"]
+                        confirmed = tool_id in confirmed_tools
+                        result = self.tools.execute(tool_name, tool_args, confirmed=confirmed, tool_id=tool_id, agent=self, on_event=None)
+                        needs_confirm = result.startswith("[CONFIRM_REQUIRED]") and not confirmed
+                        if needs_confirm and self.auto_confirm:
+                            result = self.tools.execute(tool_name, tool_args, confirmed=True, tool_id=tool_id, on_event=None)
+                            needs_confirm = False
+                        return tool_id, tool_name, tool_args, result, needs_confirm
+
+                    with ThreadPoolExecutor(max_workers=min(len(tool_blocks), 4)) as pool:
+                        futures = {pool.submit(_execute_one, tu): tu["id"] for tu in tool_blocks}
+                        for future in as_completed(futures):
+                            tool_id, tool_name, tool_args, result, needs_confirm = future.result()
+                            if needs_confirm:
+                                pending_tools.append((tool_id, tool_name, tool_args, result))
+                            else:
+                                confirmed_results.append((tool_id, tool_name, tool_args, result))
+
+                    # Sort by original tool_use order (Anthropic API expects ordered results)
+                    confirmed_results.sort(key=lambda r: tool_id_order.get(r[0], 0))
+                    pending_tools.sort(key=lambda r: tool_id_order.get(r[0], 0))
 
                 if pending_tools:
-                    tool_id, tool_name, tool_args, result = pending_tools[0]
-                    self._pending_confirm = (tool_id, tool_name, tool_args, result)
+                    self._pending_confirms = pending_tools
                     self._pending_response = response.content
                     self._confirmed_results = confirmed_results
-                    return result
+                    return pending_tools[0][3]  # return first confirm message
 
                 self.context.add_assistant_message(response.content)
                 self.context.add_tool_results(
@@ -104,33 +137,49 @@ class Agent:
         return f"Error: Exceeded max_steps ({self.max_steps})"
 
     def confirm_pending(self, confirmed_tools: set) -> tuple:
-        """执行待确认的工具调用，将所有工具结果写入上下文，返回 (should_continue, result)"""
-        if self._pending_confirm is None:
+        """执行所有待确认的工具调用，将所有工具结果写入上下文，返回 (should_continue, result)"""
+        if not self._pending_confirms:
             return (False, "No pending confirmation")
 
-        tool_id, tool_name, tool_args, _ = self._pending_confirm
-        confirmed_tools.add(tool_id)
-        self._pending_confirm = None
+        # Save local copy before clearing
+        pending = list(self._pending_confirms)
+        self._pending_confirms = None
+
+        # Add all pending tool_ids to confirmed_tools
+        for tool_id, tool_name, tool_args, result in pending:
+            confirmed_tools.add(tool_id)
 
         response_content = getattr(self, '_pending_response', None)
         if response_content:
             self.context.add_assistant_message(response_content)
             self._pending_response = None
         else:
-            self.context.add_assistant_message([{
-                "type": "tool_use",
-                "id": tool_id,
-                "name": tool_name,
-                "input": tool_args
-            }])
+            # Fallback: construct assistant message from all pending tool_use blocks
+            blocks = []
+            for tool_id, tool_name, tool_args, _ in pending:
+                blocks.append({
+                    "type": "tool_use",
+                    "id": tool_id,
+                    "name": tool_name,
+                    "input": tool_args,
+                })
+            if blocks:
+                self.context.add_assistant_message(blocks)
 
-        result = self.tools.execute(tool_name, tool_args, confirmed=True, tool_id=tool_id)
-
+        # Re-execute all pending tools with confirmed=True
         all_results = list(self._confirmed_results)
-        all_results.append((tool_id, tool_name, tool_args, result))
+        for tool_id, tool_name, tool_args, _ in pending:
+            result = self.tools.execute(tool_name, tool_args, confirmed=True, tool_id=tool_id)
+            all_results.append((tool_id, tool_name, tool_args, result))
+
+        # Sort by original tool_use order
+        tool_id_order = {tu["id"]: i for i, tu in enumerate(response_content) if isinstance(tu, dict) and tu.get("type") == "tool_use"}
+        if tool_id_order:
+            all_results.sort(key=lambda r: tool_id_order.get(r[0], 0))
+
         self._confirmed_results = []
 
         self.context.add_tool_results(
             [(tid, res) for tid, tname, targs, res in all_results]
         )
-        return (True, result)
+        return (True, all_results[-1][3])

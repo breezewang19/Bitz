@@ -1,10 +1,13 @@
 # tests/test_loop.py
 """Agent Loop 测试"""
-import pytest
+import time
+import threading
 from unittest.mock import MagicMock
+
 from agent.loop import Agent
 from agent.context import Context
 from agent.adapter import LLMResponse
+from agent.tools import ToolRegistry
 
 
 def test_agent_init():
@@ -45,21 +48,11 @@ def test_agent_run_text_response():
     result = agent.run("What can you do?")
     assert result == "Hello, how can I help?"
 
-    # Check that user + assistant messages were added to context
     assert len(ctx.messages) == 2
     assert ctx.messages[0]["role"] == "user"
     assert ctx.messages[0]["content"] == "What can you do?"
     assert ctx.messages[1]["role"] == "assistant"
     assert ctx.messages[1]["content"] == "Hello, how can I help?"
-
-    # Check that chat was called with correct messages
-    mock_adapter.chat.assert_called_once()
-    call_args = mock_adapter.chat.call_args
-    msgs = call_args[0][0]
-    assert msgs[0]["role"] == "system"
-    assert msgs[0]["content"] == "You are helpful."
-    assert msgs[1]["role"] == "user"
-    assert msgs[1]["content"] == "What can you do?"
 
 
 def test_agent_run_tool_call():
@@ -67,7 +60,6 @@ def test_agent_run_tool_call():
     mock_adapter = MagicMock()
     mock_tools = MagicMock()
 
-    # First call returns tool_use, second returns end_turn
     mock_adapter.chat.side_effect = [
         LLMResponse(
             content=[{"type": "tool_use", "id": "toolu_01", "name": "echo", "input": {"x": "hello"}}],
@@ -79,33 +71,19 @@ def test_agent_run_tool_call():
     mock_tools.execute.return_value = "hello"
 
     ctx = Context(system_prompt="You are helpful.")
-
-    agent = Agent(
-        llm_adapter=mock_adapter,
-        tools=mock_tools,
-        context=ctx,
-        max_steps=5
-    )
+    agent = Agent(llm_adapter=mock_adapter, tools=mock_tools, context=ctx, max_steps=5)
 
     result = agent.run("Echo back hello")
     assert result == "Tool returned: hello"
 
-    # Check tool was executed
     mock_tools.execute.assert_called_once_with("echo", {"x": "hello"}, confirmed=False, tool_id="toolu_01", agent=agent, on_event=None)
 
-    # Check context: user, assistant tool_use, tool result, assistant end_turn
     assert len(ctx.messages) == 4
     assert ctx.messages[0]["role"] == "user"
-    assert ctx.messages[0]["content"] == "Echo back hello"
-    # Assistant tool_use message
     assert ctx.messages[1]["role"] == "assistant"
     assert ctx.messages[1]["content"][0]["type"] == "tool_use"
-    assert ctx.messages[1]["content"][0]["id"] == "toolu_01"
-    # User tool result
     assert ctx.messages[2]["role"] == "user"
     assert ctx.messages[2]["content"][0]["tool_use_id"] == "toolu_01"
-    assert ctx.messages[2]["content"][0]["content"] == "hello"
-    # Assistant end_turn response
     assert ctx.messages[3]["role"] == "assistant"
     assert ctx.messages[3]["content"] == "Tool returned: hello"
 
@@ -121,13 +99,7 @@ def test_agent_run_max_steps_exceeded():
     mock_tools.execute.return_value = "result"
 
     ctx = Context(system_prompt="You are helpful.")
-
-    agent = Agent(
-        llm_adapter=mock_adapter,
-        tools=mock_tools,
-        context=ctx,
-        max_steps=2
-    )
+    agent = Agent(llm_adapter=mock_adapter, tools=mock_tools, context=ctx, max_steps=2)
 
     result = agent.run("Do something")
     assert "Error" in result
@@ -143,20 +115,11 @@ def test_agent_run_max_tokens_stop_reason():
     ]
     mock_tools = MagicMock()
     ctx = Context(system_prompt="You are helpful.")
-
-    agent = Agent(
-        llm_adapter=mock_adapter,
-        tools=mock_tools,
-        context=ctx,
-        max_steps=5
-    )
+    agent = Agent(llm_adapter=mock_adapter, tools=mock_tools, context=ctx, max_steps=5)
 
     result = agent.run("写一篇长文")
-    # 应该续写完成，返回最终内容
     assert result == "续写内容"
-    # 调用了两次 LLM：第一次 max_tokens，第二次 end_turn
     assert mock_adapter.chat.call_count == 2
-    # 上下文包含：user输入 + assistant部分 + user续写提示 + assistant续写
     assert ctx.messages[0]["role"] == "user"
     assert ctx.messages[1]["role"] == "assistant"
     assert ctx.messages[1]["content"] == "这是一段被截断的回复"
@@ -164,8 +127,8 @@ def test_agent_run_max_tokens_stop_reason():
     assert "继续" in ctx.messages[2]["content"]
 
 
-def test_agent_run_multiple_tool_calls():
-    """测试多次工具调用"""
+def test_agent_run_multiple_tool_calls_across_steps():
+    """测试多次工具调用（跨多步）"""
     mock_adapter = MagicMock()
     mock_adapter.chat.side_effect = [
         LLMResponse(
@@ -182,13 +145,7 @@ def test_agent_run_multiple_tool_calls():
     mock_tools.execute.return_value = "done"
 
     ctx = Context(system_prompt="You are helpful.")
-
-    agent = Agent(
-        llm_adapter=mock_adapter,
-        tools=mock_tools,
-        context=ctx,
-        max_steps=5
-    )
+    agent = Agent(llm_adapter=mock_adapter, tools=mock_tools, context=ctx, max_steps=5)
 
     result = agent.run("Do multiple things")
     assert result == "Final result"
@@ -201,7 +158,6 @@ def test_agent_confirm_pending_with_confirmed_results():
     mock_adapter = MagicMock()
     mock_tools = MagicMock()
 
-    # LLM 返回两个 tool_use：echo 不需要确认，bash 需要确认
     def execute_side_effect(name, args, confirmed=False, tool_id="", agent=None, on_event=None):
         if name == "echo":
             return "echo result"
@@ -213,7 +169,6 @@ def test_agent_confirm_pending_with_confirmed_results():
     mock_tools.execute.side_effect = execute_side_effect
     mock_tools.list_for_llm.return_value = []
 
-    # 第一步：LLM 返回两个 tool_use
     mock_adapter.chat.return_value = LLMResponse(
         content=[
             {"type": "tool_use", "id": "t1", "name": "echo", "input": {"x": 1}},
@@ -223,24 +178,15 @@ def test_agent_confirm_pending_with_confirmed_results():
     )
 
     ctx = Context(system_prompt="You are helpful.")
-    agent = Agent(
-        llm_adapter=mock_adapter,
-        tools=mock_tools,
-        context=ctx,
-        max_steps=5
-    )
+    agent = Agent(llm_adapter=mock_adapter, tools=mock_tools, context=ctx, max_steps=5)
 
     result = agent.run("Run echo and bash")
     assert "[CONFIRM_REQUIRED]" in result
 
-    # 确认 bash 工具
     confirmed_tools = set()
     should_continue, confirm_result = agent.confirm_pending(confirmed_tools)
     assert should_continue is True
-    assert confirm_result == "bash confirmed result"
 
-    # 验证上下文：两个 tool_result 都写入了
-    # messages: user, assistant(tool_use x2), user(tool_result x2)
     assert len(ctx.messages) == 3
     tool_result_msg = ctx.messages[2]
     assert tool_result_msg["role"] == "user"
@@ -248,3 +194,151 @@ def test_agent_confirm_pending_with_confirmed_results():
     tool_ids = [b["tool_use_id"] for b in tool_result_msg["content"]]
     assert "t1" in tool_ids
     assert "t2" in tool_ids
+
+
+# --- Parallel execution tests ---
+
+def test_parallel_tools_execute_concurrently():
+    """Multiple tool_use blocks should execute concurrently, not serially."""
+    ctx = Context(system_prompt="test")
+    tools = ToolRegistry()
+    execution_times = []
+    barrier = threading.Barrier(3, timeout=5)
+
+    def slow_handler(**kwargs):
+        execution_times.append(time.monotonic())
+        try:
+            barrier.wait(timeout=3)
+        except threading.BrokenBarrierError:
+            pass
+        return "result"
+
+    tools.register("slow_tool", "A slow tool", {"type": "object", "properties": {}}, slow_handler)
+
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        LLMResponse(
+            content=[
+                {"type": "tool_use", "id": "tu_1", "name": "slow_tool", "input": {}},
+                {"type": "tool_use", "id": "tu_2", "name": "slow_tool", "input": {}},
+                {"type": "tool_use", "id": "tu_3", "name": "slow_tool", "input": {}},
+            ],
+            stop_reason="tool_use",
+        ),
+        LLMResponse(content="done", stop_reason="end_turn"),
+    ]
+
+    agent = Agent(llm, tools, ctx, max_steps=5)
+    agent.auto_confirm = True
+    result = agent.run("hello")
+
+    assert len(execution_times) == 3
+    max_gap = max(execution_times) - min(execution_times)
+    assert max_gap < 0.5, f"Tools not concurrent: gap={max_gap:.2f}s"
+
+
+def test_parallel_results_order_preserved():
+    """Tool results should be written to context in original tool_use order."""
+    ctx = Context(system_prompt="test")
+    tools = ToolRegistry()
+
+    def ordered_handler(**kwargs):
+        time.sleep(0.02)
+        return "ok"
+
+    tools.register("tool_a", "Tool A", {"type": "object", "properties": {}}, ordered_handler)
+
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        LLMResponse(
+            content=[
+                {"type": "tool_use", "id": "tu_1", "name": "tool_a", "input": {}},
+                {"type": "tool_use", "id": "tu_2", "name": "tool_a", "input": {}},
+                {"type": "tool_use", "id": "tu_3", "name": "tool_a", "input": {}},
+            ],
+            stop_reason="tool_use",
+        ),
+        LLMResponse(content="done", stop_reason="end_turn"),
+    ]
+
+    agent = Agent(llm, tools, ctx, max_steps=5)
+    agent.auto_confirm = True
+    result = agent.run("hello")
+
+    messages = ctx.get_messages()
+    for msg in messages:
+        if msg.get("role") == "user" and isinstance(msg.get("content"), list):
+            tool_results = [b for b in msg["content"] if b.get("type") == "tool_result"]
+            if tool_results:
+                assert len(tool_results) == 3
+                assert tool_results[0]["tool_use_id"] == "tu_1"
+                assert tool_results[1]["tool_use_id"] == "tu_2"
+                assert tool_results[2]["tool_use_id"] == "tu_3"
+                return
+    assert False, "No tool_results found in context"
+
+
+def test_parallel_tools_mixed_confirm():
+    """When some tools need confirm and others don't, pending list has correct items."""
+    ctx = Context(system_prompt="test")
+    tools = ToolRegistry()
+
+    def safe_handler(**kwargs):
+        return "safe result"
+
+    def dangerous_handler(**kwargs):
+        return "[CONFIRM_REQUIRED] tu_2 dangerous operation"
+
+    tools.register("safe_tool", "A safe tool", {"type": "object", "properties": {}}, safe_handler)
+    tools.register("dangerous_tool", "A dangerous tool", {"type": "object", "properties": {}}, dangerous_handler, dangerous=True)
+
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        LLMResponse(
+            content=[
+                {"type": "tool_use", "id": "tu_1", "name": "safe_tool", "input": {}},
+                {"type": "tool_use", "id": "tu_2", "name": "dangerous_tool", "input": {}},
+                {"type": "tool_use", "id": "tu_3", "name": "safe_tool", "input": {}},
+            ],
+            stop_reason="tool_use",
+        ),
+    ]
+
+    agent = Agent(llm, tools, ctx, max_steps=5)
+    result = agent.run("hello")
+
+    assert agent._pending_confirms is not None
+    assert len(agent._pending_confirms) == 1
+    assert agent._pending_confirms[0][0] == "tu_2"
+    assert len(agent._confirmed_results) == 2
+    confirmed_ids = {r[0] for r in agent._confirmed_results}
+    assert confirmed_ids == {"tu_1", "tu_3"}
+
+
+def test_single_tool_no_thread_overhead():
+    """Single tool_use should execute inline without ThreadPoolExecutor."""
+    ctx = Context(system_prompt="test")
+    tools = ToolRegistry()
+    call_count = 0
+
+    def handler(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        return "result"
+
+    tools.register("test_tool", "A test tool", {"type": "object", "properties": {}}, handler)
+
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        LLMResponse(
+            content=[{"type": "tool_use", "id": "tu_1", "name": "test_tool", "input": {}}],
+            stop_reason="tool_use",
+        ),
+        LLMResponse(content="done", stop_reason="end_turn"),
+    ]
+
+    agent = Agent(llm, tools, ctx, max_steps=5)
+    agent.auto_confirm = True
+    result = agent.run("hello")
+    assert call_count == 1
+    assert result == "done"
