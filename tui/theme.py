@@ -1,19 +1,66 @@
 import os
 from textual.theme import Theme
 
-# 语义色常量（供非 Textual 组件如 banner 使用）
-COLORS = {
-    "user": "#50fa7b",
-    "assistant": "#f8f8f2",
-    "thinking": "#8be9fd",
-    "tool": "#bd93f9",
-    "error": "#ff5555",
-    "warning": "#f1fa8c",
-    "muted": "#6272a4",
-    "background": "#1e1e2e",
-    "surface": "#282a36",
-    "border": "#44475a",
+# Per-theme color palettes — each key matches a semantic role used across all widgets.
+# Keys: user, assistant, thinking, tool, error, warning, muted, background, surface, border
+_THEME_COLORS = {
+    "cat-dark": {
+        "user": "#50fa7b",
+        "assistant": "#f8f8f2",
+        "thinking": "#8be9fd",
+        "tool": "#bd93f9",
+        "error": "#ff5555",
+        "warning": "#f1fa8c",
+        "muted": "#6272a4",
+        "background": "#1e1e2e",
+        "surface": "#282a36",
+        "border": "#44475a",
+    },
+    "cat-light": {
+        "user": "#4e9a06",
+        "assistant": "#2e3436",
+        "thinking": "#0087bd",
+        "tool": "#6c3ec1",
+        "error": "#cc0000",
+        "warning": "#c4a000",
+        "muted": "#888a85",
+        "background": "#fafafa",
+        "surface": "#eeeeec",
+        "border": "#d3d7cf",
+    },
+    "cat-nord": {
+        "user": "#a3be8c",
+        "assistant": "#d8dee9",
+        "thinking": "#88c0d0",
+        "tool": "#81a1c1",
+        "error": "#bf616a",
+        "warning": "#ebcb8b",
+        "muted": "#636e7b",
+        "background": "#2e3440",
+        "surface": "#3b4252",
+        "border": "#434c5e",
+    },
 }
+
+# Active color dict — defaults to cat-dark, updated on theme change
+COLORS = dict(_THEME_COLORS["cat-dark"])
+
+# Current theme name for lookup
+_current_theme = "cat-dark"
+
+
+def set_theme_colors(theme_name: str) -> None:
+    """Update COLORS dict to match the given theme."""
+    global _current_theme
+    colors = _THEME_COLORS.get(theme_name)
+    if colors:
+        COLORS.update(colors)
+        _current_theme = theme_name
+
+
+def get_current_theme() -> str:
+    return _current_theme
+
 
 # Textual 原生主题定义
 BITZ_THEMES = [
@@ -86,7 +133,6 @@ THEME_NAMES = [t.name for t in BITZ_THEMES]
 def detect_theme() -> str:
     """根据 COLORFGBG 环境变量自动检测终端明暗，返回默认主题名。"""
     colorfgbg = os.environ.get("COLORFGBG", "")
-    # 常见暗色终端前景色: 0 (黑), 15 (白在暗底)
     if colorfgbg and ";" in colorfgbg:
         fg = colorfgbg.split(";")[0]
         if fg in ("0", "15", "7"):

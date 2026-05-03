@@ -5,7 +5,7 @@ from textual.message import Message
 from rich.text import Text
 from rich.style import Style
 
-from tui.theme import COLORS
+from tui.theme import COLORS, get_current_theme
 
 CAT_BODY = [
     "    /\\_____/\\",
@@ -21,36 +21,80 @@ CAT_BLINK = [
     "   \\______/  ~ Bitz ~",
 ]
 
-# 同色系渐变：从暗紫到亮紫，低→高亮度
-GRADIENT_COLORS = [
-    "#3b2070", "#4a2d8a", "#5a3a9e", "#6c47b2",
-    "#7e54c6", "#9061d8", "#a270e8", "#b47ef0",
-    "#c68cf8", "#d89aff", "#e8a8ff", "#f0b8ff",
-    "#c68cf8", "#a270e8", "#7e54c6", "#5a3a9e",
-    "#3b2070", "#4a2d8a", "#5a3a9e", "#6c47b2",
-    "#7e54c6", "#9061d8", "#a270e8", "#b47ef0",
-    "#c68cf8", "#d89aff", "#e8a8ff", "#f0b8ff",
-    "#c68cf8", "#a270e8", "#7e54c6", "#5a3a9e",
-]
+# Per-theme gradient palettes
+_GRADIENT_PALETTES = {
+    "cat-dark": [
+        "#3b2070", "#4a2d8a", "#5a3a9e", "#6c47b2",
+        "#7e54c6", "#9061d8", "#a270e8", "#b47ef0",
+        "#c68cf8", "#d89aff", "#e8a8ff", "#f0b8ff",
+        "#c68cf8", "#a270e8", "#7e54c6", "#5a3a9e",
+        "#3b2070", "#4a2d8a", "#5a3a9e", "#6c47b2",
+        "#7e54c6", "#9061d8", "#a270e8", "#b47ef0",
+        "#c68cf8", "#d89aff", "#e8a8ff", "#f0b8ff",
+        "#c68cf8", "#a270e8", "#7e54c6", "#5a3a9e",
+    ],
+    "cat-light": [
+        "#5a3a9e", "#6c47b2", "#7e54c6", "#9061d8",
+        "#a270e8", "#b47ef0", "#9061d8", "#7e54c6",
+        "#6c47b2", "#5a3a9e", "#4a2d8a", "#3b2070",
+        "#5a3a9e", "#6c47b2", "#7e54c6", "#9061d8",
+        "#a270e8", "#b47ef0", "#9061d8", "#7e54c6",
+        "#6c47b2", "#5a3a9e", "#4a2d8a", "#3b2070",
+        "#5a3a9e", "#6c47b2", "#7e54c6", "#9061d8",
+        "#a270e8", "#b47ef0", "#9061d8", "#7e54c6",
+    ],
+    "cat-nord": [
+        "#434c5e", "#4c566a", "#5e81ac", "#81a1c1",
+        "#88c0d0", "#8fbcbb", "#a3be8c", "#ebcb8b",
+        "#b48ead", "#81a1c1", "#88c0d0", "#5e81ac",
+        "#434c5e", "#4c566a", "#5e81ac", "#81a1c1",
+        "#88c0d0", "#8fbcbb", "#a3be8c", "#ebcb8b",
+        "#b48ead", "#81a1c1", "#88c0d0", "#5e81ac",
+        "#434c5e", "#4c566a", "#5e81ac", "#81a1c1",
+        "#88c0d0", "#8fbcbb", "#a3be8c", "#ebcb8b",
+    ],
+}
 
-GOODBYE_COLORS = [
-    "#6c47b2", "#7e54c6", "#9061d8", "#a270e8",
-    "#b47ef0", "#c68cf8", "#d89aff", "#e8a8ff", "#f0b8ff",
-]
+_GOODBYE_PALETTES = {
+    "cat-dark": ["#6c47b2", "#7e54c6", "#9061d8", "#a270e8", "#b47ef0", "#c68cf8", "#d89aff", "#e8a8ff", "#f0b8ff"],
+    "cat-light": ["#5a3a9e", "#6c47b2", "#7e54c6", "#9061d8", "#a270e8", "#b47ef0", "#9061d8", "#7e54c6", "#6c47b2"],
+    "cat-nord": ["#434c5e", "#5e81ac", "#81a1c1", "#88c0d0", "#8fbcbb", "#a3be8c", "#ebcb8b", "#b48ead", "#81a1c1"],
+}
+
+# Per-theme accent/model colors
+_ACCENT_COLORS = {
+    "cat-dark": {"model": "#9061d8", "model_label": "#6c47b2", "version": "#6c47b2", "version_label": "#5a3a9e", "welcome": "#d89aff"},
+    "cat-light": {"model": "#6c47b2", "model_label": "#5a3a9e", "version": "#5a3a9e", "version_label": "#4a2d8a", "welcome": "#7e54c6"},
+    "cat-nord": {"model": "#88c0d0", "model_label": "#5e81ac", "version": "#5e81ac", "version_label": "#4c566a", "welcome": "#81a1c1"},
+}
+
+
+def _get_gradient() -> list[str]:
+    return _GRADIENT_PALETTES.get(get_current_theme(), _GRADIENT_PALETTES["cat-dark"])
+
+
+def _get_goodbye_colors() -> list[str]:
+    return _GOODBYE_PALETTES.get(get_current_theme(), _GOODBYE_PALETTES["cat-dark"])
+
+
+def _get_accent(key: str) -> str:
+    palette = _ACCENT_COLORS.get(get_current_theme(), _ACCENT_COLORS["cat-dark"])
+    return palette.get(key, palette["model"])
 
 WELCOME_TEXT = "Welcome Back Bitz-Cat!"
 GOODBYE_TEXT = "Goodbye~"
 VERSION = "v0.1.0"
 
 BORDER_COLOR = COLORS["muted"]
-MODEL_STYLE = Style(color="#9061d8", bold=True)
-MODEL_LABEL_STYLE = Style(color="#6c47b2", dim=True)
-VERSION_STYLE = Style(color="#6c47b2", dim=True)
-VERSION_LABEL_STYLE = Style(color="#5a3a9e", dim=True)
+MODEL_STYLE = Style(color=_get_accent("model"), bold=True)
+MODEL_LABEL_STYLE = Style(color=_get_accent("model_label"), dim=True)
+VERSION_STYLE = Style(color=_get_accent("version"), dim=True)
+VERSION_LABEL_STYLE = Style(color=_get_accent("version_label"), dim=True)
 
 
 def _colorize_char(ch: str, idx: int, dim: bool = False) -> Text:
-    color = GRADIENT_COLORS[idx % len(GRADIENT_COLORS)]
+    gradient = _get_gradient()
+    color = gradient[idx % len(gradient)]
     style = Style(color=color, dim=dim, bold=not dim)
     return Text(ch, style=style)
 
@@ -172,7 +216,7 @@ class BannerWidget(Static):
             shown = WELCOME_TEXT[:self._welcome_idx]
             cursor = "▌" if self._phase == "welcome" else ""
             welcome_str = f" {shown}{cursor}"
-            welcome_text = Text(welcome_str, style=Style(color="#d89aff", bold=True))
+            welcome_text = Text(welcome_str, style=Style(color=_get_accent("welcome"), bold=True))
             model_label = Text("Model", style=MODEL_LABEL_STYLE)
             lines.append(_make_row_lr(welcome_text, model_label, w,
                                       left_len=len(welcome_str),
@@ -225,7 +269,7 @@ class BannerWidget(Static):
         lines.append(_make_row("", w))
 
         # Welcome (left) + Model label (right)
-        welcome_text = Text(f" {WELCOME_TEXT}", style=Style(color="#d89aff", bold=True))
+        welcome_text = Text(f" {WELCOME_TEXT}", style=Style(color=_get_accent("welcome"), bold=True))
         model_label = Text("Model", style=MODEL_LABEL_STYLE)
         lines.append(_make_row_lr(welcome_text, model_label, w,
                                   left_len=len(f" {WELCOME_TEXT}"),

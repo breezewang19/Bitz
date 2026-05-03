@@ -14,8 +14,8 @@ from tui.widgets.copy_button import CopyButton
 class UserMessage(Static):
     DEFAULT_CSS = """
     UserMessage {
-        background: #1a1a2e;
-        color: #50fa7b;
+        background: $surface;
+        color: $success;
         margin: 0 0 1 0;
         padding: 0 1;
         width: 100%;
@@ -83,7 +83,7 @@ class AssistantMessage(Static):
 class ThinkingIndicator(Static):
     DEFAULT_CSS = """
     ThinkingIndicator {
-        color: #8be9fd;
+        color: $secondary;
         margin: 0 0 0 0;
         padding: 0 1;
         height: 1;
@@ -253,8 +253,8 @@ class SubAgentCard(Static):
     """子 Agent 状态卡片，内嵌滚动日志"""
     DEFAULT_CSS = """
     SubAgentCard {
-        background: #1a1a2e;
-        border: round #6272a4;
+        background: $surface;
+        border: round $panel;
         margin: 0 0 1 0;
         padding: 0 1;
         height: auto;
@@ -268,7 +268,7 @@ class SubAgentCard(Static):
         width: 1fr;
     }
     SubAgentCard .subagent-header {
-        color: #8be9fd;
+        color: $secondary;
         padding: 0 0 0 0;
     }
     SubAgentCard .subagent-log {

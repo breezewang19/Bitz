@@ -11,7 +11,7 @@ from textual.binding import Binding
 from textual.widgets import Static
 from textual.events import Key
 
-from tui.theme import BITZ_CSS
+from tui.theme import BITZ_CSS, set_theme_colors
 from tui.widgets.banner import BannerWidget, GoodbyeWidget
 from tui.widgets.chat import ChatLog, format_tool_content, ThinkingIndicator, SubAgentCard
 from tui.widgets.confirm import ConfirmPrompt
@@ -72,9 +72,14 @@ class BitzApp(App):
         for theme in BITZ_THEMES:
             self.register_theme(theme)
         self.theme = detect_theme()
+        set_theme_colors(self.theme)
         self._install_tool_logger()
         self._install_retry_logger()
         self._install_text_callback()
+
+    def on_theme_changed(self, event) -> None:
+        """Sync COLORS dict when user switches theme."""
+        set_theme_colors(self.theme)
 
     def _install_tool_logger(self) -> None:
         """Monkey-patch tools.execute to log tool calls to UI via ToolCard."""
