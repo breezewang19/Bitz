@@ -24,6 +24,8 @@ async def test_banner_restore():
     app._result = None
     async with app.run_test() as pilot:
         await pilot.pause()
+        banner = app.query_one(SessionRestoreBanner)
+        banner.focus()
         await pilot.press("r")
         await pilot.pause()
         assert app._result == "restored"
@@ -36,6 +38,8 @@ async def test_banner_skip():
     app._result = None
     async with app.run_test() as pilot:
         await pilot.pause()
+        banner = app.query_one(SessionRestoreBanner)
+        banner.focus()
         await pilot.press("escape")
         await pilot.pause()
         assert app._result == "skipped"

@@ -9,6 +9,8 @@ from rich.text import Text
 class SessionRestoreBanner(Static):
     """启动时提示恢复上次会话。"""
 
+    can_focus = True
+
     DEFAULT_CSS = """
     SessionRestoreBanner {
         color: $text-muted;
