@@ -15,14 +15,24 @@ Implement lightweight JSONL-based session persistence in the Python agent layer,
 - `project-slug`: cwd path sanitized (non-alphanumeric → `-`, truncated 200 chars)
 - Each session: one `.jsonl` file + one `.meta.json` file
 
-### JSONL Entry Types
+### JSONL Format
 
-| type | fields | description |
-|------|--------|-------------|
-| `user` | uuid, content, timestamp | User text input |
-| `assistant` | uuid, content, timestamp | Assistant text reply |
-| `tool_use` | uuid, name, args, timestamp | Tool call request |
-| `tool_result` | uuid, tool_use_id, content, is_error, timestamp | Tool execution result |
+One JSONL line per `Context.add_*` call, preserving the exact `role` and `content` structure that the Anthropic API expects. This eliminates the need for any reconstruction algorithm — `load_session()` reads lines and directly populates `Context.messages`.
+
+Each line is a JSON object with the message dict plus persistence metadata:
+
+```jsonl
+{"role":"user","content":"hello","uuid":"...","timestamp":"..."}
+{"role":"assistant","content":[{"type":"text","text":"Let me check"},{"type":"tool_use","id":"toolu_01","name":"bash","input":{"command":"ls"}}],"uuid":"...","timestamp":"..."}
+{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"file1.txt\nfile2.txt"}],"uuid":"...","timestamp":"..."}
+{"role":"assistant","content":"Here are the files.","uuid":"...","timestamp":"..."}
+```
+
+Key design decisions:
+- `role` and `content` are stored exactly as Anthropic API messages — no decomposition into separate entry types
+- `uuid` is a persistence identifier (for deduplication and reference), separate from Anthropic's `tool_use_id` which lives inside `content` blocks
+- `timestamp` is ISO 8601 UTC
+- On restore, each line becomes one entry in `Context.messages` with no transformation needed
 
 ### meta.json
 
@@ -34,22 +44,25 @@ Implement lightweight JSONL-based session persistence in the Python agent layer,
   "project": "/path/to/project",
   "created_at": "ISO8601",
   "updated_at": "ISO8601",
-  "message_count": 42,
+  "turn_count": 5,
   "first_prompt": "First 80 chars of first user message..."
 }
 ```
 
+`turn_count` counts user turns (number of times the user submitted input), not total messages or JSONL lines.
+
 ### Write Strategy
 
-- Each `Context.add_*` method synchronously appends one JSONL line (`json.dumps() + "\n"`)
-- meta.json written on session creation, updated after each conversation turn (`updated_at`, `message_count`)
+- Each `Context.add_*` method synchronously appends one JSONL line containing the full message dict plus `uuid` and `timestamp`
+- `append_entry()` uses a `threading.Lock` to ensure atomic writes (agent.run executes in a thread pool via `run_in_executor`)
+- meta.json written on session creation, updated after each user turn (`updated_at`, `turn_count`)
 - Lazy file materialization: files created on first write, not on session init
 
 ### Read Strategy
 
 - Session list: read `.meta.json` files only (no JSONL parsing) — fast
-- Session restore: parse JSONL line-by-line → rebuild `Context.messages`
-- Search: stream-scan JSONL lines for keyword matches
+- Session restore: parse JSONL line-by-line → extract `role`/`content` → populate `Context.messages` directly
+- Search: case-insensitive substring match across JSONL lines, return matching sessions with a snippet of the matching line
 
 ## Core Module: `agent/session.py`
 
@@ -60,12 +73,13 @@ class SessionStore:
     def __init__(self, project_dir: str): ...
     def create_session(self, model: str) -> str              # returns session_id
     def list_sessions(self) -> list[SessionMeta]             # read meta.json list
-    def load_session(self, session_id: str) -> list[dict]    # parse JSONL → messages
+    def load_session(self, session_id: str) -> list[dict]    # parse JSONL → messages (role/content dicts)
     def delete_session(self, session_id: str) -> None        # delete .jsonl + .meta.json
-    def append_entry(self, session_id: str, entry: dict)     # append one JSONL line
+    def append_entry(self, session_id: str, entry: dict)     # append one JSONL line (thread-safe, locked)
     def update_meta(self, session_id: str, **kwargs)         # update meta.json
-    def search_sessions(self, query: str) -> list[SessionMeta]  # search session content
+    def search_sessions(self, query: str) -> list[tuple[SessionMeta, str]]  # (meta, snippet) case-insensitive substring
     def get_latest_session(self) -> SessionMeta | None       # most recent session
+    def get_meta(self, session_id: str) -> SessionMeta       # read single meta.json
 ```
 
 ### Context Integration
@@ -79,18 +93,38 @@ class Context:
         self._store = session_store
 ```
 
-Each `add_*` method gets a `_persist()` call at the end:
+Each `add_*` method gets a `_persist()` call at the end. The `_persist` method stores the full message dict (role + content) as-is:
 
 ```python
 def add_user(self, content: str) -> None:
-    self.messages.append({"role": "user", "content": content})
+    msg = {"role": "user", "content": content}
+    self.messages.append(msg)
     self._trim()
-    self._persist("user", content)
+    self._persist(msg)
 
-def _persist(self, entry_type: str, content, **kwargs) -> None:
+def add_assistant_text(self, text: str) -> None:
+    msg = {"role": "assistant", "content": text}
+    self.messages.append(msg)
+    self._trim()
+    self._persist(msg)
+
+def add_assistant_message(self, content: list) -> None:
+    msg = {"role": "assistant", "content": content}
+    self.messages.append(msg)
+    self._trim()
+    self._persist(msg)
+
+def add_tool_results(self, results: list[tuple[str, str]]) -> None:
+    blocks = [{"type": "tool_result", "tool_use_id": tid, "content": content} for tid, content in results]
+    msg = {"role": "user", "content": blocks}
+    self.messages.append(msg)
+    self._trim()
+    self._persist(msg)
+
+def _persist(self, msg: dict) -> None:
     if self._store is None:
         return
-    entry = {"type": entry_type, "uuid": str(uuid4()), "timestamp": iso_now(), ...}
+    entry = {**msg, "uuid": str(uuid4()), "timestamp": datetime.now(timezone.utc).isoformat()}
     self._store.append_entry(self.session_id, entry)
 ```
 
@@ -100,18 +134,18 @@ When `session_store` is None (subagents, tests), `_persist` is a no-op — zero 
 
 ```python
 def restore_session(store: SessionStore, session_id: str) -> Context:
-    messages = store.load_session(session_id)
+    messages = store.load_session(session_id)  # returns list of {"role": ..., "content": ...}
     meta = store.get_meta(session_id)
     context = Context(
         system_prompt=build_system_prompt(cwd=meta.project),
         session_id=session_id,
         session_store=store,
     )
-    context.messages = messages
+    context.messages = messages  # direct assignment — JSONL stores exact role/content structure
     return context
 ```
 
-Restored messages keep original role/content structure. Context._trim naturally prunes during subsequent conversation.
+`load_session()` reads each JSONL line, strips `uuid` and `timestamp`, and returns the remaining `{"role": ..., "content": ...}` dict. No reconstruction needed — the format matches Anthropic API message structure exactly.
 
 ### Subagent Isolation
 
@@ -137,7 +171,6 @@ Subagents (`agent/subagent.py`) create Context without session_store — no pers
 | `/sessions` | Open session list modal |
 | `/resume [id]` | Resume specified session (latest if no id) |
 | `/title <text>` | Set current session title |
-| `/save` | Manually save current session metadata |
 
 ### BitzApp Changes
 
@@ -149,7 +182,7 @@ class BitzApp(App):
 ```
 
 - `on_mount`: if `resume_session_id` set, restore session and render history into ChatLog
-- `action_new_conversation`: create new session (new session_id, clear Context, re-associate session_store)
+- `action_new_conversation`: finalize old session's meta.json (final `update_meta()`), then create new session (new session_id, clear Context, re-associate session_store). `get_latest_session()` returns the session with the most recent `updated_at`, so a brand-new empty session will not overshadow a previous session with actual content.
 - `_process_agent_result`: call `session_store.update_meta()` after each turn
 - `action_quit`: ensure final meta update completes
 
@@ -175,7 +208,7 @@ First user message's first 80 chars used as default title in meta.json. User can
 
 ### Concurrency
 
-- Single Bitz process: Python GIL serializes writes naturally
+- `append_entry()` uses a `threading.Lock` to ensure atomic writes — `agent.run()` executes in a thread pool via `run_in_executor`, and tool execution also uses `ThreadPoolExecutor`, so concurrent `_persist()` calls are possible
 - Multiple Bitz instances on same project: each has independent session_id, no file conflicts
 
 ### Large Files
