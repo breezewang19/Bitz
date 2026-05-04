@@ -1,5 +1,7 @@
 # Bitz 🐱
 
+[中文文档](README_CN.md)
+
 A minimal AI Agent with a beautiful terminal chat interface — core agent under 1000 lines of code.
 
 **Bitz** is a learning project that teaches the ReAct pattern, tool calling, LLM adaptation, context management, and TUI development through a working AI agent you can chat with in your terminal.
