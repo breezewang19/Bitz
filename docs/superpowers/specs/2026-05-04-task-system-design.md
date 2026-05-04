@@ -50,6 +50,7 @@ class Task:
 **Metadata conventions**:
 - `metadata._internal`: Reserved for framework use; tasks with this key are hidden from TaskList tool output but remain in persistence (needed for dependency cleanup)
 - Null values in metadata updates delete the corresponding key (matching Claude Code behavior)
+- Metadata updates use shallow merge: top-level keys from the update replace existing keys; nested objects are replaced entirely, not deep-merged
 
 ## 2. Persistence Layer
 
@@ -93,14 +94,14 @@ class Task:
 #### `block_task(project_slug, blocker_id, blocked_id) -> bool`
 - Creates bidirectional dependency link (same as Claude Code's `blockTask`)
 - `blocker_id.blocks` gains `blocked_id`; `blocked_id.blockedBy` gains `blocker_id`
-- Detect circular dependencies via `has_cycle()` check before creating the link
+- Internally calls `list_tasks(project_slug)` to load all tasks, then checks `has_cycle()` before creating the link
 - If circular: return False
 - Write both tasks
 - Return True
 
 #### `has_cycle(all_tasks, start_id, target_id) -> bool`
 - DFS from `start_id` following `blocks` edges, check if `target_id` is reachable
-- Used by `block_task()` to prevent circular dependencies
+- Called by `block_task()` which provides `all_tasks` from `list_tasks()`
 
 #### `is_blocked(task, all_tasks) -> bool`
 - Check if any task in `task.blockedBy` has status != `completed`
@@ -180,7 +181,7 @@ Four new tools registered in `agent/builtin_tools.py`, following the existing to
 - `status: "deleted"` -> call `delete_task()`, return early
 - `add_blocks` -> call `block_task(project_slug, task_id, block_id)` for each
 - `add_blocked_by` -> call `block_task(project_slug, blocker_id, task_id)` for each
-- Return `"Updated task #<id> <changed_fields>"`
+- Return `"Updated task #<id> <changed_fields>"` where `<changed_fields>` is a comma-separated list of field names that changed (e.g., `"Updated task #3 status, description"`)
 
 ### TaskList
 
@@ -189,7 +190,7 @@ Four new tools registered in `agent/builtin_tools.py`, following the existing to
 **Behavior**:
 - List all tasks (excluding `_internal`)
 - Filter `blockedBy` to show only unresolved blockers
-- Format: `#<id> [<status>] <subject> [blocked by #<id>, #<id>]`
+- Format: `#<id> [<status>] <subject>` with optional `[blocked by #<id>, #<id>]` suffix (only shown when unresolved blockers exist)
 
 ### TaskGet
 
@@ -208,10 +209,13 @@ Four new tools registered in `agent/builtin_tools.py`, following the existing to
 ```
 Task #<id>: <subject>
 Status: <status>
+Active form: <activeForm> (only shown if set)
 Description: <description>
-Blocked by: #<id>, #<id>
-Blocks: #<id>
+Blocked by: #<id>, #<id> (only shown if non-empty)
+Blocks: #<id> (only shown if non-empty)
 ```
+
+Note: `delete_task()` is not a standalone tool — it is only accessible through `TaskUpdate` with `status: "deleted"`.
 
 ## 4. TUI Integration
 
@@ -238,7 +242,7 @@ When a task is `in_progress` and has an `activeForm`, the TUI shows the `activeF
 **Priority ordering** (same as Claude Code):
 1. Recently completed (within 30s) > in_progress > pending > older completed
 
-**Auto-hide**: Collapse 5 seconds after all tasks complete. Tasks remain persisted on disk (unlike Claude Code which auto-deletes completed tasks — Bitz preserves them for review).
+**Auto-hide**: Collapse 5 seconds after all tasks complete. Tasks remain persisted on disk (unlike Claude Code which auto-deletes completed tasks — Bitz preserves them for review). When no tasks exist at all, the widget is hidden entirely (no empty state shown).
 
 **Max display**: 10 items.
 
@@ -250,7 +254,7 @@ When a task is `in_progress` and has an `activeForm`, the TUI shows the `activeF
 
 1. **BitzApp**: Add TaskListWidget in `BitzApp.compose()` alongside `ChatLog`, as a collapsible panel above the chat area
 2. **StatusBar**: Show task count (e.g., "Tasks: 2/5")
-3. **Tool execution callback**: After task tools execute, call `task_list_widget.refresh()` via `BitzApp._install_tool_logger()`
+3. **Tool execution callback**: After task tool execution, call `task_list_widget.refresh()` via `BitzApp._install_tool_logger()` — only trigger for task-related tools (`task_create`, `task_update`, `task_list`, `task_get`) to avoid unnecessary refreshes
 
 ## 5. Error Handling
 
