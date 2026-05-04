@@ -5,6 +5,19 @@ import re
 import urllib.request
 
 from agent.tools import ToolRegistry
+from agent.tasks import (
+    create_task,
+    get_task,
+    list_tasks,
+    update_task,
+    delete_task,
+    get_project_slug,
+    is_blocked,
+)
+
+# Module-level base_dir override (used by tests to redirect task storage).
+# When None, task functions use their default (~/.bitz/tasks).
+_TASK_BASE_DIR = None
 
 MAX_OUTPUT = 30000
 HALF_OUTPUT = MAX_OUTPUT // 2
@@ -322,6 +335,192 @@ def create_tools() -> ToolRegistry:
         description=SPAWN_TOOL_DEF["description"],
         input_schema=SPAWN_TOOL_DEF["input_schema"],
         handler=lambda **kwargs: "",  # 占位 handler，不会被调用
+    )
+
+    # -----------------------------------------------------------------------
+    # Task tools
+    # -----------------------------------------------------------------------
+
+    def _task_kwargs():
+        """Return common kwargs for task CRUD functions (slug, base_dir)."""
+        kw = {"project_slug": get_project_slug()}
+        if _TASK_BASE_DIR is not None:
+            kw["base_dir"] = _TASK_BASE_DIR
+        return kw
+
+    def task_create_handler(
+        subject: str,
+        description: str,
+        active_form: str | None = None,
+        metadata: dict | None = None,
+    ) -> str:
+        kw = _task_kwargs()
+        task = create_task(
+            kw.pop("project_slug"),
+            subject,
+            description,
+            active_form=active_form,
+            metadata=metadata,
+            **kw,
+        )
+        return f"Task #{task.id} created successfully: {task.subject}"
+
+    def task_update_handler(
+        task_id: str,
+        subject: str | None = None,
+        description: str | None = None,
+        active_form: str | None = None,
+        status: str | None = None,
+        metadata: dict | None = None,
+        add_blocks: list | None = None,
+        add_blocked_by: list | None = None,
+    ) -> str:
+        kw = _task_kwargs()
+
+        # Handle deletion as a special case
+        if status == "deleted":
+            delete_task(kw.pop("project_slug"), task_id, **kw)
+            return f"Deleted task #{task_id}"
+
+        # Build updates dict from non-None params
+        updates: dict = {}
+        if subject is not None:
+            updates["subject"] = subject
+        if description is not None:
+            updates["description"] = description
+        if active_form is not None:
+            updates["active_form"] = active_form
+        if status is not None:
+            updates["status"] = status
+        if metadata is not None:
+            updates["metadata"] = metadata
+        if add_blocks is not None:
+            updates["add_blocks"] = add_blocks
+        if add_blocked_by is not None:
+            updates["add_blocked_by"] = add_blocked_by
+
+        result = update_task(kw.pop("project_slug"), task_id, **updates, **kw)
+        if result is None:
+            return f"Task #{task_id} not found"
+
+        changed_fields = ", ".join(updates.keys())
+        return f"Updated task #{task_id} {changed_fields}"
+
+    def task_list_handler() -> str:
+        kw = _task_kwargs()
+        all_tasks = list_tasks(kw.pop("project_slug"), **kw)
+
+        # Filter out _internal tasks for display
+        visible = [t for t in all_tasks if not t.metadata.get("_internal")]
+
+        if not visible:
+            return "No tasks"
+
+        lines = []
+        for t in visible:
+            line = f"#{t.id} [{t.status.value}] {t.subject}"
+            # Check if blocked by any unresolved blockers
+            unresolved = []
+            for blocker_id in t.blockedBy:
+                blocker = next((x for x in all_tasks if x.id == blocker_id), None)
+                if blocker is not None and blocker.status.value != "completed":
+                    unresolved.append(blocker_id)
+            if unresolved:
+                line += f" [blocked by {', '.join(f'#{b}' for b in unresolved)}]"
+            lines.append(line)
+
+        return "\n".join(lines)
+
+    def task_get_handler(task_id: str) -> str:
+        kw = _task_kwargs()
+        task = get_task(kw.pop("project_slug"), task_id, **kw)
+        if task is None:
+            return f"Task #{task_id} not found"
+
+        lines = [
+            f"Task #{task.id}: {task.subject}",
+            f"Status: {task.status.value}",
+        ]
+        if task.activeForm:
+            lines.append(f"Active form: {task.activeForm}")
+        lines.append(f"Description: {task.description}")
+        if task.blockedBy:
+            lines.append(f"Blocked by: {', '.join(f'#{b}' for b in task.blockedBy)}")
+        if task.blocks:
+            lines.append(f"Blocks: {', '.join(f'#{b}' for b in task.blocks)}")
+
+        return "\n".join(lines)
+
+    tools.register(
+        name="task_create",
+        description="Create a new task. Returns the task ID and subject.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "subject": {"type": "string", "description": "Brief title for the task"},
+                "description": {"type": "string", "description": "Detailed description of the task"},
+                "active_form": {"type": "string", "description": "Present-continuous form shown in spinner (e.g. 'Running tests')"},
+                "metadata": {"type": "object", "description": "Arbitrary metadata key-value pairs"},
+            },
+            "required": ["subject", "description"],
+        },
+        handler=task_create_handler,
+    )
+
+    tools.register(
+        name="task_update",
+        description="Update an existing task. Set status to 'deleted' to delete it. Use add_blocks/add_blocked_by to set dependencies.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "ID of the task to update"},
+                "subject": {"type": "string", "description": "New subject"},
+                "description": {"type": "string", "description": "New description"},
+                "active_form": {"type": "string", "description": "New active form"},
+                "status": {
+                    "type": "string",
+                    "enum": ["pending", "in_progress", "completed", "deleted"],
+                    "description": "New status. 'deleted' removes the task.",
+                },
+                "metadata": {"type": "object", "description": "Metadata to merge (null values delete keys)"},
+                "add_blocks": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Task IDs that this task blocks",
+                },
+                "add_blocked_by": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Task IDs that block this task",
+                },
+            },
+            "required": ["task_id"],
+        },
+        handler=task_update_handler,
+        dangerous=True,
+    )
+
+    tools.register(
+        name="task_list",
+        description="List all visible tasks (hides internal tasks). Shows status and blocked-by info.",
+        input_schema={
+            "type": "object",
+            "properties": {},
+        },
+        handler=task_list_handler,
+    )
+
+    tools.register(
+        name="task_get",
+        description="Get detailed information about a specific task, including dependencies.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "ID of the task to retrieve"},
+            },
+            "required": ["task_id"],
+        },
+        handler=task_get_handler,
     )
 
     return tools
