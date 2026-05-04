@@ -46,6 +46,8 @@ class StatusBar(Widget):
         self.input_tokens: int = 0
         self.output_tokens: int = 0
         self.persistence_error: bool = False
+        self.task_in_progress: int = 0
+        self.task_total: int = 0
         self._left: Static | None = None
         self._right: Static | None = None
 
@@ -85,6 +87,9 @@ class StatusBar(Widget):
                 style=color,
             ))
 
+        if self.task_total > 0:
+            parts.append(Text(f"Tasks: {self.task_in_progress}/{self.task_total}", style=color))
+
         if self.persistence_error:
             parts.append(Text("⚠", style="red"))
 
@@ -116,6 +121,11 @@ class StatusBar(Widget):
     def update_tokens(self, input_tokens: int, output_tokens: int) -> None:
         self.input_tokens = input_tokens
         self.output_tokens = output_tokens
+        self._refresh()
+
+    def update_task_count(self, in_progress: int, total: int) -> None:
+        self.task_in_progress = in_progress
+        self.task_total = total
         self._refresh()
 
     def _refresh(self) -> None:

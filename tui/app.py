@@ -20,6 +20,7 @@ from tui.widgets.status import StatusBar
 from tui.widgets.model_select import ModelSelectScreen
 from tui.widgets.model_add import ModelAddScreen
 from tui.widgets.model_confirm import ModelConfirmScreen
+from tui.widgets.task_list import TaskListWidget
 from agent.skills import SkillRegistry
 
 if TYPE_CHECKING:
@@ -55,6 +56,7 @@ class BitzApp(App):
         self._total_output_tokens: int = 0
 
     def compose(self) -> ComposeResult:
+        yield TaskListWidget(id="task-list")
         yield ChatLog()
         yield ThinkingIndicator()
         yield StatusBar()
@@ -176,6 +178,24 @@ class BitzApp(App):
                         diff_text = "".join(diff_lines)
 
                 app._post_tool_result(name, result, is_error, diff_text)
+
+                # Refresh task list after task tool execution (thread-safe)
+                if name.startswith("task_"):
+                    try:
+                        task_widget = app.query_one("#task-list", TaskListWidget)
+                        app.call_from_thread(task_widget.refresh_tasks)
+                    except Exception:
+                        pass
+                    # Also update task count in StatusBar
+                    try:
+                        from agent.tasks import list_tasks as _list_tasks, get_project_slug as _get_slug, TaskStatus as _TS
+                        _slug = _get_slug()
+                        _tasks = _list_tasks(_slug)
+                        _in_progress = sum(1 for t in _tasks if t.status == _TS.IN_PROGRESS)
+                        status_bar = app.query_one(StatusBar)
+                        app.call_from_thread(status_bar.update_task_count, _in_progress, len(_tasks))
+                    except Exception:
+                        pass
             finally:
                 app._set_tool_running(None)
             return result
