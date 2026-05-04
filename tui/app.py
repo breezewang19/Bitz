@@ -375,7 +375,7 @@ class BitzApp(App):
         elif command == "sessions":
             if self._session_store:
                 from tui.widgets.session_list import SessionListScreen
-                self.push_screen(SessionListScreen(self._session_store), self._on_sessions_result)
+                self.push_screen(SessionListScreen(self._session_store))
             else:
                 chat.add_message("assistant", "会话管理未启用")
         elif command == "resume":
@@ -521,18 +521,14 @@ class BitzApp(App):
                 return
             self.push_screen(ModelConfirmScreen(data), self._on_model_deleted)
 
-    def _on_sessions_result(self, result) -> None:
-        """SessionListScreen 回调。"""
-        if result is None:
-            return
-        action, session_id = result
+    def on_session_list_screen_resume(self, event) -> None:
+        """SessionListScreen 恢复回调。"""
+        self._do_resume_session(event.session_id)
+
+    def on_session_list_screen_delete(self, event) -> None:
+        """SessionListScreen 删除回调。"""
         chat = self.query_one(ChatLog)
-        if action == "resume":
-            self._do_resume_session(session_id)
-        elif action == "delete":
-            if self._session_store:
-                self._session_store.delete_session(session_id)
-                chat.add_message("assistant", f"会话 {session_id[:8]}... 已删除")
+        chat.add_message("assistant", f"会话 {event.session_id[:8]}... 已删除")
 
     def _do_resume_session(self, session_id: str) -> None:
         """恢复指定会话。"""

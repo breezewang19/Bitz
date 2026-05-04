@@ -1,14 +1,29 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone, timedelta
+
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Vertical, Horizontal
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Input, OptionList, Static
+from textual.widgets import Button, Input, OptionList, Static
 from rich.text import Text
 
 from agent.session import SessionStore, SessionMeta
+
+_BJT = timezone(timedelta(hours=8))
+
+
+def _bjt_time(iso_str: str) -> str:
+    """Convert ISO UTC string to Beijing time display."""
+    try:
+        dt = datetime.fromisoformat(iso_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(_BJT).strftime("%m-%d %H:%M")
+    except Exception:
+        return iso_str[:16]
 
 
 class SessionListScreen(ModalScreen):
@@ -41,10 +56,13 @@ class SessionListScreen(ModalScreen):
         height: auto;
         max-height: 16;
     }
-    SessionListScreen .session-hint {
-        color: $text-muted;
-        text-align: center;
+    SessionListScreen #session-buttons {
+        height: auto;
         margin-top: 1;
+        align: center middle;
+    }
+    SessionListScreen #session-buttons Button {
+        margin: 0 1;
     }
     """
 
@@ -69,7 +87,9 @@ class SessionListScreen(ModalScreen):
             yield Static("会话历史", classes="session-title")
             yield Input(placeholder="搜索...", id="session-search")
             yield OptionList(id="session-options")
-            yield Static("Enter 恢复 │ d 删除 │ Esc 关闭", classes="session-hint")
+            with Horizontal(id="session-buttons"):
+                yield Button("恢复", variant="primary", id="btn-resume")
+                yield Button("删除", variant="error", id="btn-delete")
 
     def on_mount(self) -> None:
         self._populate(self._sessions)
@@ -84,7 +104,7 @@ class SessionListScreen(ModalScreen):
                 Text(m.title or "无标题", style="bold cyan"),
                 Text(f"  ({m.model})", style="dim"),
                 Text(f"  {m.turn_count}轮", style="dim"),
-                Text(f"  {m.updated_at[:16]}", style="dim"),
+                Text(f"  {_bjt_time(m.updated_at)}", style="dim"),
             )
             ol.add_option(label)
 
@@ -105,22 +125,22 @@ class SessionListScreen(ModalScreen):
             self.post_message(self.Resume(self._filtered[idx].session_id))
             self.dismiss()
 
-    def on_key(self, event) -> None:
-        """Handle 'd' key for delete regardless of focus."""
-        if event.key == "d":
-            ol = self.query_one("#session-options", OptionList)
-            idx = ol.highlighted
-            if idx is not None and idx < len(self._filtered):
-                session = self._filtered[idx]
-                self.post_message(self.Delete(session.session_id))
-                # Remove from lists and refresh
-                self._sessions = [s for s in self._sessions if s.session_id != session.session_id]
-                self._filtered.pop(idx)
-                ol.remove_option_at_index(idx)
-                if not self._sessions:
-                    self.dismiss()
-            event.prevent_default()
-            event.stop()
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        ol = self.query_one("#session-options", OptionList)
+        idx = ol.highlighted
+        if idx is None or idx >= len(self._filtered):
+            return
+        session = self._filtered[idx]
+        if event.button.id == "btn-resume":
+            self.post_message(self.Resume(session.session_id))
+            self.dismiss()
+        elif event.button.id == "btn-delete":
+            self._store.delete_session(session.session_id)
+            self._sessions = [s for s in self._sessions if s.session_id != session.session_id]
+            self._filtered.pop(idx)
+            ol.remove_option_at_index(idx)
+            if not self._sessions:
+                self.dismiss()
 
     def action_dismiss(self) -> None:
         self.dismiss()
