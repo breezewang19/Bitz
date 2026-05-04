@@ -1,31 +1,44 @@
 # agent/context.py
 """Context 会话上下文管理 - Anthropic 协议"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from uuid import uuid4
 
 
 class Context:
     """会话上下文"""
 
-    def __init__(self, system_prompt: str = "", max_tokens: int = 16384, keep_last_n: int = 10):
+    def __init__(self, system_prompt: str = "", max_tokens: int = 16384, keep_last_n: int = 10,
+                 session_id: str | None = None, session_store=None):
         self.system_prompt = system_prompt
         self.messages: list[dict] = []
         self.max_tokens = max_tokens
         self.keep_last_n = keep_last_n
         self._active_skill = None
+        self.session_id = session_id
+        self._store = session_store
 
     def add_user(self, content: str) -> None:
         """添加用户消息"""
-        self.messages.append({"role": "user", "content": content})
+        msg = {"role": "user", "content": content}
+        self.messages.append(msg)
         self._trim()
+        self._persist(msg)
 
     def add_assistant_message(self, content: list) -> None:
         """添加 assistant 消息（包含 tool_use blocks）"""
-        self.messages.append({"role": "assistant", "content": content})
+        msg = {"role": "assistant", "content": content}
+        self.messages.append(msg)
         self._trim()
+        self._persist(msg)
 
     def add_assistant_text(self, text: str) -> None:
         """添加 assistant 纯文本消息"""
-        self.messages.append({"role": "assistant", "content": text})
+        msg = {"role": "assistant", "content": text}
+        self.messages.append(msg)
         self._trim()
+        self._persist(msg)
 
     def add_tool_result(self, tool_use_id: str, content: str) -> None:
         """添加单个 tool_result（兼容方法，用于 confirm_pending 等单工具场景）"""
@@ -40,8 +53,10 @@ class Context:
                 "tool_use_id": tool_id,
                 "content": result,
             })
-        self.messages.append({"role": "user", "content": blocks})
+        msg = {"role": "user", "content": blocks}
+        self.messages.append(msg)
         self._trim()
+        self._persist(msg)
 
     def set_active_skill(self, skill) -> None:
         """设置当前活跃的 Skill"""
@@ -61,8 +76,6 @@ class Context:
         if len(self.messages) <= self.keep_last_n:
             return
         self.messages = self.messages[-self.keep_last_n:]
-        # 确保 tool_result 有对应的 tool_use：如果第一条消息是 tool_result，
-        # 说明对应的 assistant tool_use 消息被裁掉了，必须一起移除
         while self.messages:
             first = self.messages[0]
             if first["role"] == "user" and isinstance(first.get("content"), list):
@@ -75,19 +88,23 @@ class Context:
                     continue
             break
 
+    def _persist(self, msg: dict) -> None:
+        """持久化消息到 JSONL（当 session_store 存在时）"""
+        if self._store is None:
+            return
+        entry = {**msg, "uuid": str(uuid4()), "timestamp": datetime.now(timezone.utc).isoformat()}
+        self._store.append_entry(self.session_id, entry)
+
     def get_messages(self) -> list[dict]:
         """返回完整消息列表（system 作为独立条目）"""
         msgs = [{"role": "system", "content": self.system_prompt}]
         msgs.extend(self.messages)
 
-        # 动态拼接 Skill 到 system 消息（分层注入）
         if self._active_skill:
             skill = self._active_skill
             if skill.skill_dir:
-                # 目录型 Skill：仅注入 L1 摘要，agent 按需 read_file SKILL.md
                 skill_section = f"\n\n{skill.summary()}"
             else:
-                # 单文件 Skill：全量注入 prompt
                 skill_section = f"\n\n[当前 Skill: {skill.name}]\n{skill.prompt}"
             msgs[0] = {**msgs[0], "content": msgs[0]["content"] + skill_section}
 

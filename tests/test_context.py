@@ -80,3 +80,69 @@ def test_context_get_messages_trimmed():
     assert msgs[0]["role"] == "system"
     assert msgs[1]["content"] == "Message 2"
     assert msgs[2]["content"] == "Message 3"
+
+
+class FakeSessionStore:
+    """In-memory fake for testing Context._persist"""
+    def __init__(self):
+        self.entries = []
+        self.session_id = "test-session"
+
+    def append_entry(self, session_id, entry):
+        self.entries.append(entry)
+
+
+def test_context_persist_user():
+    store = FakeSessionStore()
+    ctx = Context(system_prompt="test", session_id="s1", session_store=store)
+    ctx.add_user("hello")
+    assert len(store.entries) == 1
+    assert store.entries[0]["role"] == "user"
+    assert store.entries[0]["content"] == "hello"
+    assert "uuid" in store.entries[0]
+    assert "timestamp" in store.entries[0]
+
+
+def test_context_persist_assistant_text():
+    store = FakeSessionStore()
+    ctx = Context(system_prompt="test", session_id="s1", session_store=store)
+    ctx.add_assistant_text("response")
+    assert len(store.entries) == 1
+    assert store.entries[0]["role"] == "assistant"
+    assert store.entries[0]["content"] == "response"
+
+
+def test_context_persist_assistant_message():
+    store = FakeSessionStore()
+    ctx = Context(system_prompt="test", session_id="s1", session_store=store)
+    content = [{"type": "tool_use", "id": "t1", "name": "bash", "input": {"command": "ls"}}]
+    ctx.add_assistant_message(content)
+    assert len(store.entries) == 1
+    assert store.entries[0]["role"] == "assistant"
+    assert store.entries[0]["content"] == content
+
+
+def test_context_persist_tool_results():
+    store = FakeSessionStore()
+    ctx = Context(system_prompt="test", session_id="s1", session_store=store)
+    ctx.add_tool_results([("t1", "output1"), ("t2", "output2")])
+    assert len(store.entries) == 1
+    assert store.entries[0]["role"] == "user"
+    assert len(store.entries[0]["content"]) == 2
+    assert store.entries[0]["content"][0]["tool_use_id"] == "t1"
+
+
+def test_context_no_persist_without_store():
+    ctx = Context(system_prompt="test")
+    ctx.add_user("hello")
+    # Should not raise — _persist is a no-op when _store is None
+    assert len(ctx.messages) == 1
+
+
+def test_context_add_tool_result_delegates_to_results():
+    """add_tool_result (singular) delegates to add_tool_results, so _persist fires once"""
+    store = FakeSessionStore()
+    ctx = Context(system_prompt="test", session_id="s1", session_store=store)
+    ctx.add_tool_result("t1", "output")
+    assert len(store.entries) == 1
+    assert store.entries[0]["role"] == "user"
