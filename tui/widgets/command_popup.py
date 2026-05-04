@@ -20,6 +20,9 @@ BASE_COMMANDS = [
     ("/compact", "压缩上下文"),
     ("/theme [name]", "切换主题"),
     ("/models", "模型管理弹窗"),
+    ("/sessions", "打开会话历史列表"),
+    ("/resume [id]", "恢复指定会话"),
+    ("/title <text>", "设置会话标题"),
 ]
 
 # max-height 8 行 - border(top 1 + bottom 1) = 6 行内容区

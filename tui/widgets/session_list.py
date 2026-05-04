@@ -1,17 +1,22 @@
 from __future__ import annotations
 
-from textual.screen import ModalScreen
-from textual.widgets import OptionList, Static, Input
+from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Vertical
 from textual.message import Message
-from textual.binding import Binding
+from textual.screen import ModalScreen
+from textual.widgets import Input, OptionList, Static
 from rich.text import Text
 
 from agent.session import SessionStore, SessionMeta
 
 
 class SessionListScreen(ModalScreen):
-    """会话历史列表弹窗。"""
+    """会话历史列表弹窗"""
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "关闭"),
+    ]
 
     DEFAULT_CSS = """
     SessionListScreen {
@@ -36,67 +41,86 @@ class SessionListScreen(ModalScreen):
         height: auto;
         max-height: 16;
     }
+    SessionListScreen .session-hint {
+        color: $text-muted;
+        text-align: center;
+        margin-top: 1;
+    }
     """
 
-    class SessionAction(Message):
-        def __init__(self, action: str, session_id: str | None) -> None:
-            super().__init__()
-            self.action = action
+    class Resume(Message):
+        def __init__(self, session_id: str) -> None:
             self.session_id = session_id
+            super().__init__()
+
+    class Delete(Message):
+        def __init__(self, session_id: str) -> None:
+            self.session_id = session_id
+            super().__init__()
 
     def __init__(self, store: SessionStore) -> None:
         super().__init__()
         self._store = store
-        self._sessions: list[SessionMeta] = []
+        self._sessions: list[SessionMeta] = store.list_sessions()
+        self._filtered: list[SessionMeta] = list(self._sessions)
 
-    def compose(self):
+    def compose(self) -> ComposeResult:
         with Vertical():
             yield Static("会话历史", classes="session-title")
             yield Input(placeholder="搜索...", id="session-search")
-            option_list = OptionList(id="session-options")
-            self._sessions = self._store.list_sessions()
-            for m in self._sessions:
-                label = Text.assemble(
-                    Text(m.title or "无标题", style="bold cyan"),
-                    Text(f"  ({m.model})", style="dim"),
-                    Text(f"  {m.turn_count}轮", style="dim"),
-                    Text(f"  {m.updated_at[:16]}", style="dim"),
-                )
-                option_list.add_option(label)
-            yield option_list
+            yield OptionList(id="session-options")
+            yield Static("Enter 恢复 │ d 删除 │ Esc 关闭", classes="session-hint")
 
-    def on_input_changed(self, event: Input.Changed) -> None:
-        if event.input.id != "session-search":
-            return
-        query = event.value.strip().lower()
-        option_list = self.query_one("#session-options", OptionList)
-        option_list.clear_options()
-        for m in self._sessions:
-            if query and query not in (m.title or "").lower() and query not in m.model.lower():
-                continue
+    def on_mount(self) -> None:
+        self._populate(self._sessions)
+        self.query_one("#session-search", Input).focus()
+
+    def _populate(self, sessions: list[SessionMeta]) -> None:
+        self._filtered = sessions
+        ol = self.query_one("#session-options", OptionList)
+        ol.clear_options()
+        for m in sessions:
             label = Text.assemble(
                 Text(m.title or "无标题", style="bold cyan"),
                 Text(f"  ({m.model})", style="dim"),
                 Text(f"  {m.turn_count}轮", style="dim"),
                 Text(f"  {m.updated_at[:16]}", style="dim"),
             )
-            option_list.add_option(label)
+            ol.add_option(label)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "session-search":
+            return
+        query = event.value.strip().lower()
+        if not query:
+            self._populate(self._sessions)
+            return
+        filtered = [m for m in self._sessions
+                    if query in (m.title or "").lower() or query in m.model.lower()]
+        self._populate(filtered)
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         idx = event.option_index
-        if idx < len(self._sessions):
-            self.dismiss(("resume", self._sessions[idx].session_id))
+        if idx < len(self._filtered):
+            self.post_message(self.Resume(self._filtered[idx].session_id))
+            self.dismiss()
 
-    BINDINGS = [
-        Binding("d", "delete_selected", "删除"),
-        Binding("escape", "close", "关闭"),
-    ]
+    def on_key(self, event) -> None:
+        """Handle 'd' key for delete regardless of focus."""
+        if event.key == "d":
+            ol = self.query_one("#session-options", OptionList)
+            idx = ol.highlighted
+            if idx is not None and idx < len(self._filtered):
+                session = self._filtered[idx]
+                self.post_message(self.Delete(session.session_id))
+                # Remove from lists and refresh
+                self._sessions = [s for s in self._sessions if s.session_id != session.session_id]
+                self._filtered.pop(idx)
+                ol.remove_option_at_index(idx)
+                if not self._sessions:
+                    self.dismiss()
+            event.prevent_default()
+            event.stop()
 
-    def action_delete_selected(self) -> None:
-        option_list = self.query_one("#session-options", OptionList)
-        idx = option_list.highlighted
-        if idx is not None and idx < len(self._sessions):
-            self.dismiss(("delete", self._sessions[idx].session_id))
-
-    def action_close(self) -> None:
-        self.dismiss(None)
+    def action_dismiss(self) -> None:
+        self.dismiss()
