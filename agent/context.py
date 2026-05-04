@@ -18,6 +18,7 @@ class Context:
         self._active_skill = None
         self.session_id = session_id
         self._store = session_store
+        self._persist_error = False
 
     def add_user(self, content: str) -> None:
         """添加用户消息"""
@@ -93,7 +94,10 @@ class Context:
         if self._store is None:
             return
         entry = {**msg, "uuid": str(uuid4()), "timestamp": datetime.now(timezone.utc).isoformat()}
-        self._store.append_entry(self.session_id, entry)
+        try:
+            self._store.append_entry(self.session_id, entry)
+        except Exception:
+            self._persist_error = True
 
     def get_messages(self) -> list[dict]:
         """返回完整消息列表（system 作为独立条目）"""

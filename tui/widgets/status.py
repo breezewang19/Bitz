@@ -45,6 +45,7 @@ class StatusBar(Widget):
         self.step_count: int = 0
         self.input_tokens: int = 0
         self.output_tokens: int = 0
+        self.persistence_error: bool = False
         self._left: Static | None = None
         self._right: Static | None = None
 
@@ -53,6 +54,10 @@ class StatusBar(Widget):
         self._right = Static(self._render_right(), id="status-right")
         yield self._left
         yield self._right
+
+    def update_persistence_error(self, has_error: bool) -> None:
+        self.persistence_error = has_error
+        self._refresh()
 
     def _format_tokens(self, n: int) -> str:
         if n >= 1_000_000:
@@ -79,6 +84,9 @@ class StatusBar(Widget):
                 f"↑{self._format_tokens(self.output_tokens)}",
                 style=color,
             ))
+
+        if self.persistence_error:
+            parts.append(Text("⚠", style="red"))
 
         try:
             cwd = os.getcwd()

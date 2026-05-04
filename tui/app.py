@@ -856,6 +856,10 @@ class BitzApp(App):
                 self._agent.context.session_id,
                 turn_count=self._step_count,
             )
+        # Sync persistence error state
+        if hasattr(self._agent.context, '_persist_error'):
+            status = self.query_one(StatusBar)
+            status.update_persistence_error(self._agent.context._persist_error)
 
     def _start_thinking_animation(self) -> None:
         self._thinking_task = asyncio.create_task(self._thinking_animation_loop())
