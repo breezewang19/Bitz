@@ -119,12 +119,7 @@ class SessionListScreen(ModalScreen):
                     if query in (m.title or "").lower() or query in m.model.lower()]
         self._populate(filtered)
 
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        idx = event.option_index
-        if idx < len(self._filtered):
-            self.post_message(self.Resume(self._filtered[idx].session_id))
-            self.dismiss()
-
+    
     def on_button_pressed(self, event: Button.Pressed) -> None:
         ol = self.query_one("#session-options", OptionList)
         idx = ol.highlighted
