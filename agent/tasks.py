@@ -203,6 +203,79 @@ def list_tasks(
     return tasks
 
 
+def has_cycle(all_tasks: list[Task], start_id: str, target_id: str) -> bool:
+    """DFS from *start_id* following ``blocks`` edges.
+
+    Return ``True`` if *target_id* is reachable, indicating that adding a
+    dependency from *target_id* back to *start_id* would create a cycle.
+    """
+    # Build adjacency map: task_id -> list of task IDs it blocks
+    adj: dict[str, list[str]] = {t.id: list(t.blocks) for t in all_tasks}
+
+    visited: set[str] = set()
+    stack = [start_id]
+    while stack:
+        current = stack.pop()
+        if current == target_id:
+            return True
+        if current in visited:
+            continue
+        visited.add(current)
+        stack.extend(adj.get(current, []))
+    return False
+
+
+def block_task(
+    project_slug: str,
+    blocker_id: str,
+    blocked_id: str,
+    *,
+    base_dir: Path | None = None,
+) -> bool:
+    """Create a bidirectional dependency between two tasks.
+
+    *blocker_id* gains *blocked_id* in ``blocks``; *blocked_id* gains
+    *blocker_id* in ``blockedBy``.
+
+    Returns ``False`` if a circular dependency would result or either task
+    doesn't exist.  Returns ``True`` on success.
+    """
+    # Load both tasks
+    blocker = get_task(project_slug, blocker_id, base_dir=base_dir)
+    blocked = get_task(project_slug, blocked_id, base_dir=base_dir)
+    if blocker is None or blocked is None:
+        return False
+
+    # Check for circular dependency: would adding blocker->blocked create a
+    # path from blocked back to blocker?
+    all_tasks = list_tasks(project_slug, base_dir=base_dir)
+    if has_cycle(all_tasks, start_id=blocked_id, target_id=blocker_id):
+        return False
+
+    tasks_dir = _get_tasks_dir(project_slug, base_dir)
+
+    # Apply bidirectional links
+    if blocked_id not in blocker.blocks:
+        blocker.blocks.append(blocked_id)
+        _write_task(tasks_dir, blocker)
+
+    if blocker_id not in blocked.blockedBy:
+        blocked.blockedBy.append(blocker_id)
+        _write_task(tasks_dir, blocked)
+
+    return True
+
+
+def is_blocked(task: Task, all_tasks: list[Task]) -> bool:
+    """Return ``True`` if any task in *task.blockedBy* is not COMPLETED."""
+    by_id: dict[str, Task] = {t.id: t for t in all_tasks}
+    for blocker_id in task.blockedBy:
+        blocker = by_id.get(blocker_id)
+        if blocker is not None and blocker.status != TaskStatus.COMPLETED:
+            return True
+    return False
+
+
 def update_task(
     project_slug: str,
     task_id: str,
@@ -214,7 +287,7 @@ def update_task(
 
     Special handling:
     - ``status="deleted"``: delegates to :func:`delete_task`.
-    - ``add_blocks`` / ``add_blocked_by``: sets dependency links.
+    - ``add_blocks`` / ``add_blocked_by``: sets dependency links via :func:`block_task`.
     - ``metadata``: shallow-merged with null-deletion.
     """
     tasks_dir = _get_tasks_dir(project_slug, base_dir)
@@ -251,26 +324,22 @@ def update_task(
             else:
                 task.metadata[k] = v
 
-    # --- Dependency links ---
+    # --- Dependency links (delegated to block_task) ---
     if add_blocks:
         for block_id in add_blocks:
-            if block_id not in task.blocks:
-                task.blocks.append(block_id)
-            # Update the blocked task's blockedBy
-            blocked = get_task(project_slug, block_id, base_dir=base_dir)
-            if blocked is not None and task_id not in blocked.blockedBy:
-                blocked.blockedBy.append(task_id)
-                _write_task(tasks_dir, blocked)
+            block_task(project_slug, task_id, block_id, base_dir=base_dir)
+        # Refresh task from disk to reflect changes made by block_task
+        task = get_task(project_slug, task_id, base_dir=base_dir)
+        if task is None:
+            return None
 
     if add_blocked_by:
         for blocker_id in add_blocked_by:
-            if blocker_id not in task.blockedBy:
-                task.blockedBy.append(blocker_id)
-            # Update the blocker task's blocks
-            blocker = get_task(project_slug, blocker_id, base_dir=base_dir)
-            if blocker is not None and task_id not in blocker.blocks:
-                blocker.blocks.append(task_id)
-                _write_task(tasks_dir, blocker)
+            block_task(project_slug, blocker_id, task_id, base_dir=base_dir)
+        # Refresh task from disk to reflect changes made by block_task
+        task = get_task(project_slug, task_id, base_dir=base_dir)
+        if task is None:
+            return None
 
     # --- Persist ---
     _write_task(tasks_dir, task)

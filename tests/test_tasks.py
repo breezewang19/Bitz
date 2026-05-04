@@ -17,6 +17,9 @@ from agent.tasks import (
     list_tasks,
     update_task,
     delete_task,
+    has_cycle,
+    block_task,
+    is_blocked,
 )
 
 
@@ -440,3 +443,135 @@ class TestHelpers:
         assert not d.exists()
         _ensure_dir(d)
         assert d.exists()
+
+
+# ---------------------------------------------------------------------------
+# TestHasCycle
+# ---------------------------------------------------------------------------
+
+class TestHasCycle:
+    def test_no_cycle(self):
+        # 1 -> 2 -> 3: checking if 1 is reachable from 3 (it's not, so no cycle)
+        t1 = Task(id="1", subject="A", description="", blocks=["2"])
+        t2 = Task(id="2", subject="B", description="", blocks=["3"])
+        t3 = Task(id="3", subject="C", description="", blocks=[])
+        assert has_cycle([t1, t2, t3], start_id="3", target_id="1") is False
+
+    def test_detects_cycle(self):
+        # 1 -> 2 -> 3 -> 1 (cycle)
+        t1 = Task(id="1", subject="A", description="", blocks=["2"])
+        t2 = Task(id="2", subject="B", description="", blocks=["3"])
+        t3 = Task(id="3", subject="C", description="", blocks=["1"])
+        assert has_cycle([t1, t2, t3], start_id="1", target_id="1") is True
+
+    def test_no_cycle_unrelated_tasks(self):
+        t1 = Task(id="1", subject="A", description="", blocks=[])
+        t2 = Task(id="2", subject="B", description="", blocks=[])
+        assert has_cycle([t1, t2], start_id="1", target_id="2") is False
+
+    def test_detects_indirect_cycle(self):
+        # 1 -> 2 -> 3 -> 2 (cycle involving 2)
+        t1 = Task(id="1", subject="A", description="", blocks=["2"])
+        t2 = Task(id="2", subject="B", description="", blocks=["3"])
+        t3 = Task(id="3", subject="C", description="", blocks=["2"])
+        assert has_cycle([t1, t2, t3], start_id="2", target_id="2") is True
+
+
+# ---------------------------------------------------------------------------
+# TestBlockTask
+# ---------------------------------------------------------------------------
+
+class TestBlockTask:
+    def test_bidirectional_link(self, slug, base_dir):
+        create_task(slug, "Blocker", "Desc", base_dir=base_dir)
+        create_task(slug, "Blocked", "Desc", base_dir=base_dir)
+        result = block_task(slug, "1", "2", base_dir=base_dir)
+        assert result is True
+        # blocker (1) should have "2" in blocks
+        t1 = get_task(slug, "1", base_dir=base_dir)
+        assert "2" in t1.blocks
+        # blocked (2) should have "1" in blockedBy
+        t2 = get_task(slug, "2", base_dir=base_dir)
+        assert "1" in t2.blockedBy
+
+    def test_rejects_circular_dependency(self, slug, base_dir):
+        # Create 1 -> 2 -> 3 chain, then try to make 3 block 1
+        create_task(slug, "Task 1", "Desc", base_dir=base_dir)
+        create_task(slug, "Task 2", "Desc", base_dir=base_dir)
+        create_task(slug, "Task 3", "Desc", base_dir=base_dir)
+        # 1 blocks 2
+        block_task(slug, "1", "2", base_dir=base_dir)
+        # 2 blocks 3
+        block_task(slug, "2", "3", base_dir=base_dir)
+        # Trying to make 3 block 1 would create a cycle
+        result = block_task(slug, "3", "1", base_dir=base_dir)
+        assert result is False
+        # Verify the link was NOT created
+        t3 = get_task(slug, "3", base_dir=base_dir)
+        assert "1" not in t3.blocks
+
+    def test_rejects_direct_cycle(self, slug, base_dir):
+        # 1 blocks 2, then try to make 2 block 1
+        create_task(slug, "Task 1", "Desc", base_dir=base_dir)
+        create_task(slug, "Task 2", "Desc", base_dir=base_dir)
+        block_task(slug, "1", "2", base_dir=base_dir)
+        result = block_task(slug, "2", "1", base_dir=base_dir)
+        assert result is False
+
+    def test_allows_non_circular_chain(self, slug, base_dir):
+        # 1 -> 2 -> 3 is fine
+        create_task(slug, "Task 1", "Desc", base_dir=base_dir)
+        create_task(slug, "Task 2", "Desc", base_dir=base_dir)
+        create_task(slug, "Task 3", "Desc", base_dir=base_dir)
+        assert block_task(slug, "1", "2", base_dir=base_dir) is True
+        assert block_task(slug, "2", "3", base_dir=base_dir) is True
+
+    def test_rejects_nonexistent_task(self, slug, base_dir):
+        create_task(slug, "Task 1", "Desc", base_dir=base_dir)
+        result = block_task(slug, "1", "999", base_dir=base_dir)
+        assert result is False
+        result = block_task(slug, "999", "1", base_dir=base_dir)
+        assert result is False
+
+    def test_idempotent_block(self, slug, base_dir):
+        create_task(slug, "Task 1", "Desc", base_dir=base_dir)
+        create_task(slug, "Task 2", "Desc", base_dir=base_dir)
+        assert block_task(slug, "1", "2", base_dir=base_dir) is True
+        # Calling again should still return True (no cycle created)
+        assert block_task(slug, "1", "2", base_dir=base_dir) is True
+
+
+# ---------------------------------------------------------------------------
+# TestIsBlocked
+# ---------------------------------------------------------------------------
+
+class TestIsBlocked:
+    def test_not_blocked_no_blockers(self):
+        t = Task(id="1", subject="A", description="", blockedBy=[])
+        assert is_blocked(t, [t]) is False
+
+    def test_blocked_by_pending_task(self):
+        t1 = Task(id="1", subject="A", description="", status=TaskStatus.PENDING)
+        t2 = Task(id="2", subject="B", description="", blockedBy=["1"])
+        assert is_blocked(t2, [t1, t2]) is True
+
+    def test_blocked_by_in_progress_task(self):
+        t1 = Task(id="1", subject="A", description="", status=TaskStatus.IN_PROGRESS)
+        t2 = Task(id="2", subject="B", description="", blockedBy=["1"])
+        assert is_blocked(t2, [t1, t2]) is True
+
+    def test_not_blocked_after_blocker_completes(self):
+        t1 = Task(id="1", subject="A", description="", status=TaskStatus.COMPLETED)
+        t2 = Task(id="2", subject="B", description="", blockedBy=["1"])
+        assert is_blocked(t2, [t1, t2]) is False
+
+    def test_not_blocked_when_blocker_missing(self):
+        # blockedBy references a task not in all_tasks - treat as unblocked
+        t = Task(id="1", subject="A", description="", blockedBy=["999"])
+        assert is_blocked(t, [t]) is False
+
+    def test_blocked_by_multiple_one_pending(self):
+        t1 = Task(id="1", subject="A", description="", status=TaskStatus.COMPLETED)
+        t2 = Task(id="2", subject="B", description="", status=TaskStatus.PENDING)
+        t3 = Task(id="3", subject="C", description="", blockedBy=["1", "2"])
+        assert is_blocked(t3, [t1, t2, t3]) is True
