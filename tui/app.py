@@ -77,6 +77,12 @@ class BitzApp(App):
         self._install_tool_logger()
         self._install_retry_logger()
         self._install_text_callback()
+        # Show restore banner if there are history sessions
+        if self._session_store:
+            latest = self._session_store.get_latest_session()
+            if latest and latest.session_id != self._agent.context.session_id:
+                from tui.widgets.session_banner import SessionRestoreBanner
+                chat.mount(SessionRestoreBanner(title=latest.title or "无标题", turn_count=latest.turn_count))
 
     def on_theme_changed(self, event) -> None:
         """Sync COLORS dict when user switches theme."""
@@ -306,6 +312,9 @@ class BitzApp(App):
                 "| `/models <id>` | 切换模型（文本） |\n"
                 "| `/skill` | 列出可用 Skill |\n"
                 "| `/skill off` | 清除当前 Skill |\n"
+                "| `/sessions` | 打开会话历史列表 |\n"
+                "| `/resume [id]` | 恢复指定会话（无id时恢复最近的） |\n"
+                "| `/title <text>` | 设置当前会话标题 |\n"
             )
             # 追加 Skill 列表
             skills = self._skill_registry.list_all()
@@ -363,6 +372,34 @@ class BitzApp(App):
                     if active:
                         lines.append(f"\n当前激活: **{active.name}** ({active.trigger})")
                     chat.add_message("assistant", "\n".join(lines))
+        elif command == "sessions":
+            if self._session_store:
+                from tui.widgets.session_list import SessionListScreen
+                self.push_screen(SessionListScreen(self._session_store), self._on_sessions_result)
+            else:
+                chat.add_message("assistant", "会话管理未启用")
+        elif command == "resume":
+            if self._session_store:
+                target_id = args.strip() if args.strip() else None
+                if target_id:
+                    self._do_resume_session(target_id)
+                else:
+                    latest = self._session_store.get_latest_session()
+                    if latest:
+                        self._do_resume_session(latest.session_id)
+                    else:
+                        chat.add_message("assistant", "没有历史会话可恢复")
+            else:
+                chat.add_message("assistant", "会话管理未启用")
+        elif command == "title":
+            if args.strip() and self._session_store and self._agent.context.session_id:
+                self._session_store.update_meta(
+                    self._agent.context.session_id,
+                    title=args.strip(),
+                )
+                chat.add_message("assistant", f"会话标题已设置为: {args.strip()}")
+            else:
+                chat.add_message("assistant", "用法: /title <标题文本>")
         elif self._skill_registry.get_by_trigger(f"/{command}"):
             skill = self._skill_registry.get_by_trigger(f"/{command}")
             self._activate_skill(skill)
@@ -483,6 +520,60 @@ class BitzApp(App):
                 chat.add_message("assistant", "至少需要保留一个模型")
                 return
             self.push_screen(ModelConfirmScreen(data), self._on_model_deleted)
+
+    def _on_sessions_result(self, result) -> None:
+        """SessionListScreen 回调。"""
+        if result is None:
+            return
+        action, session_id = result
+        chat = self.query_one(ChatLog)
+        if action == "resume":
+            self._do_resume_session(session_id)
+        elif action == "delete":
+            if self._session_store:
+                self._session_store.delete_session(session_id)
+                chat.add_message("assistant", f"会话 {session_id[:8]}... 已删除")
+
+    def _do_resume_session(self, session_id: str) -> None:
+        """恢复指定会话。"""
+        from agent.session import restore_session
+        from agent.prompt import build_system_prompt
+
+        chat = self.query_one(ChatLog)
+        if not self._session_store:
+            chat.add_message("assistant", "会话管理未启用")
+            return
+
+        context, meta = restore_session(
+            self._session_store,
+            session_id,
+            system_prompt=build_system_prompt(cwd=os.getcwd(), skill_registry=self._skill_registry),
+        )
+        self._agent.context = context
+
+        # Re-render ChatLog
+        for child in list(chat.children):
+            child.remove()
+
+        for msg in context.messages:
+            role = msg["role"]
+            content = msg["content"]
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        chat.add_message("tool", block.get("content", "")[:200], tool_name="tool")
+                    elif isinstance(block, dict) and block.get("type") == "tool_use":
+                        chat.add_message("tool", f"{block['name']}: {str(block.get('input', ''))[:80]}", tool_name=block["name"])
+                    elif isinstance(block, dict) and block.get("type") == "text":
+                        chat.add_message("assistant", block["text"])
+            elif isinstance(content, str):
+                if role == "user":
+                    chat.add_message("user", content)
+                else:
+                    chat.add_message("assistant", content)
+
+        chat.mount(BannerWidget(model_name=self._agent.llm_adapter.model))
+        chat.add_message("assistant", f"已恢复会话: **{meta.title or '无标题'}** ({meta.turn_count}轮)")
 
     def _on_model_added(self, result) -> None:
         """ModelAddScreen 回调。"""
@@ -826,6 +917,15 @@ class BitzApp(App):
         # 重新挂载 Banner
         model_name = self._agent.llm_adapter.model
         chat.mount(BannerWidget(model_name=model_name))
+
+    def on_session_restore_banner_restore(self, event) -> None:
+        if self._session_store:
+            latest = self._session_store.get_latest_session()
+            if latest:
+                self._do_resume_session(latest.session_id)
+
+    def on_session_restore_banner_skip(self, event) -> None:
+        pass  # Banner already removed itself
 
     def action_quit(self) -> None:
         if self._exiting:
