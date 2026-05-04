@@ -35,11 +35,12 @@ class BitzApp(App):
         ("ctrl+q", "quit", "Quit"),
     ]
 
-    def __init__(self, agent: Agent, model_store=None, skill_registry=None, **kwargs) -> None:
+    def __init__(self, agent: Agent, model_store=None, skill_registry=None, session_store=None, **kwargs) -> None:
         super().__init__(**kwargs)
         self._agent = agent
         self._model_store = model_store
         self._skill_registry = skill_registry or SkillRegistry()
+        self._session_store = session_store
         self._original_execute = agent.tools.execute
         self._cancel_event = threading.Event()
         self._subagent_cards: dict = {}
@@ -271,6 +272,16 @@ class BitzApp(App):
 
         chat = self.query_one(ChatLog)
         chat.add_message("user", event.text)
+        # Set first_prompt and title on first user message
+        if self._session_store and self._agent.context.session_id:
+            meta = self._session_store.get_meta(self._agent.context.session_id)
+            if not meta.first_prompt:
+                prompt_text = event.text[:80]
+                self._session_store.update_meta(
+                    self._agent.context.session_id,
+                    first_prompt=prompt_text,
+                    title=prompt_text,
+                )
         self._run_agent(event.text)
 
     def on_input_bar_command_submitted(self, event: InputBar.CommandSubmitted) -> None:
@@ -748,6 +759,12 @@ class BitzApp(App):
         status = self.query_one(StatusBar)
         if self._total_input_tokens > 0 or self._total_output_tokens > 0:
             status.update_tokens(self._total_input_tokens, self._total_output_tokens)
+        # Update session meta after each turn
+        if self._session_store and self._agent.context.session_id:
+            self._session_store.update_meta(
+                self._agent.context.session_id,
+                turn_count=self._step_count,
+            )
 
     def _start_thinking_animation(self) -> None:
         self._thinking_task = asyncio.create_task(self._thinking_animation_loop())
@@ -781,6 +798,9 @@ class BitzApp(App):
 
     def action_new_conversation(self) -> None:
         """清空对话和上下文，开始新对话。"""
+        # Finalize old session meta
+        if self._session_store and self._agent.context.session_id:
+            self._session_store.update_meta(self._agent.context.session_id)
         chat = self.query_one(ChatLog)
         # 清空所有聊天内容
         for child in list(chat.children):
@@ -788,6 +808,12 @@ class BitzApp(App):
         # 清空 Agent 上下文
         self._agent.context.messages.clear()
         self._agent.context.clear_active_skill()
+        # Create new session
+        if self._session_store:
+            model = self._agent.llm_adapter.model
+            new_session_id = self._session_store.create_session(model=model)
+            self._agent.context.session_id = new_session_id
+            self._agent.context._store = self._session_store
         # 重置计数器
         self._step_count = 0
         self._total_input_tokens = 0
@@ -804,6 +830,9 @@ class BitzApp(App):
     def action_quit(self) -> None:
         if self._exiting:
             return
+        # Finalize session meta on quit
+        if self._session_store and self._agent.context.session_id:
+            self._session_store.update_meta(self._agent.context.session_id)
         self._exiting = True
         chat = self.query_one(ChatLog)
         chat.mount(GoodbyeWidget())

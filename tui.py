@@ -35,6 +35,7 @@ def main():
         from agent.prompt import build_system_prompt
         from agent.models import ModelStore
         from agent.skills import SkillRegistry
+        from agent.session import SessionStore
         from tui import BitzApp
 
         store = ModelStore()
@@ -56,10 +57,16 @@ def main():
         skill_registry.load_builtin(os.path.join(os.path.dirname(__file__), "skills"))
         skill_registry.load_user(os.path.join(".", ".bitz", "skills"))
 
+        session_store = SessionStore(project_dir=os.getcwd())
+        session_id = session_store.create_session(model=current.model)
+        session_store.update_meta(session_id, project=os.getcwd())
+
         context = Context(
             system_prompt=build_system_prompt(cwd=os.getcwd(), skill_registry=skill_registry),
             max_tokens=4096,
             keep_last_n=20,
+            session_id=session_id,
+            session_store=session_store,
         )
         tools = create_tools()
         agent = Agent(
@@ -69,7 +76,7 @@ def main():
             max_steps=100,
         )
 
-        app = BitzApp(agent=agent, model_store=store, skill_registry=skill_registry)
+        app = BitzApp(agent=agent, model_store=store, skill_registry=skill_registry, session_store=session_store)
         app.run()
 
 
