@@ -575,3 +575,72 @@ class TestIsBlocked:
         t2 = Task(id="2", subject="B", description="", status=TaskStatus.PENDING)
         t3 = Task(id="3", subject="C", description="", blockedBy=["1", "2"])
         assert is_blocked(t3, [t1, t2, t3]) is True
+
+
+# ---------------------------------------------------------------------------
+# TestEdgeCases
+# ---------------------------------------------------------------------------
+
+class TestEdgeCases:
+    def test_highwatermark_survives_multiple_deletes(self, slug, base_dir):
+        create_task(slug, "A", "Desc", base_dir=base_dir)
+        create_task(slug, "B", "Desc", base_dir=base_dir)
+        create_task(slug, "C", "Desc", base_dir=base_dir)
+        delete_task(slug, "2", base_dir=base_dir)
+        delete_task(slug, "3", base_dir=base_dir)
+        d = create_task(slug, "D", "Desc", base_dir=base_dir)
+        assert d.id == "4"
+
+    def test_missing_highwatermark_rebuilds(self, slug, base_dir):
+        create_task(slug, "A", "Desc", base_dir=base_dir)
+        create_task(slug, "B", "Desc", base_dir=base_dir)
+        # Delete the highwatermark file
+        tasks_dir = _get_tasks_dir(slug, base_dir)
+        hw_path = tasks_dir / ".highwatermark"
+        assert hw_path.exists()
+        hw_path.unlink()
+        c = create_task(slug, "C", "Desc", base_dir=base_dir)
+        assert c.id == "3"
+
+    def test_empty_task_dir(self, slug, base_dir):
+        tasks = list_tasks(slug, base_dir=base_dir)
+        assert tasks == []
+
+    def test_update_only_changed_fields(self, slug, base_dir):
+        create_task(slug, "Original", "Original desc", base_dir=base_dir)
+        t = update_task(slug, "1", subject="Updated", base_dir=base_dir)
+        assert t.subject == "Updated"
+        assert t.description == "Original desc"
+
+    def test_block_task_with_nonexistent_task(self, slug, base_dir):
+        create_task(slug, "A", "Desc", base_dir=base_dir)
+        result = block_task(slug, "1", "999", base_dir=base_dir)
+        assert result is False
+
+    def test_longer_cycle_detection(self, slug, base_dir):
+        create_task(slug, "A", "Desc", base_dir=base_dir)
+        create_task(slug, "B", "Desc", base_dir=base_dir)
+        create_task(slug, "C", "Desc", base_dir=base_dir)
+        create_task(slug, "D", "Desc", base_dir=base_dir)
+        # 1 -> 2 -> 3 -> 4
+        assert block_task(slug, "1", "2", base_dir=base_dir) is True
+        assert block_task(slug, "2", "3", base_dir=base_dir) is True
+        assert block_task(slug, "3", "4", base_dir=base_dir) is True
+        # Try to close the cycle: 4 -> 1
+        result = block_task(slug, "4", "1", base_dir=base_dir)
+        assert result is False
+
+    def test_delete_cleans_up_both_directions(self, slug, base_dir):
+        create_task(slug, "A", "Desc", base_dir=base_dir)
+        create_task(slug, "B", "Desc", base_dir=base_dir)
+        create_task(slug, "C", "Desc", base_dir=base_dir)
+        # Task 1 blocks both task 2 and task 3
+        block_task(slug, "1", "2", base_dir=base_dir)
+        block_task(slug, "1", "3", base_dir=base_dir)
+        # Delete task 1
+        delete_task(slug, "1", base_dir=base_dir)
+        # Verify references cleaned up
+        t2 = get_task(slug, "2", base_dir=base_dir)
+        t3 = get_task(slug, "3", base_dir=base_dir)
+        assert "1" not in t2.blockedBy
+        assert "1" not in t3.blockedBy
