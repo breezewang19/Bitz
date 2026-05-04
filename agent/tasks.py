@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from pathlib import Path
@@ -308,6 +309,8 @@ def update_task(
     # --- Apply scalar / simple fields ---
     if "status" in updates:
         task.status = TaskStatus(updates.pop("status"))
+        if task.status == TaskStatus.COMPLETED:
+            task.metadata["_completedAt"] = time.time()
     if "subject" in updates:
         task.subject = updates.pop("subject")
     if "description" in updates:
