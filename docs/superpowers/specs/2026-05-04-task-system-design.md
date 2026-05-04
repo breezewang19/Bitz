@@ -47,6 +47,10 @@ class Task:
 
 **Status workflow**: `pending` -> `in_progress` -> `completed`. The `deleted` status is a special action in TaskUpdate, not a valid TaskStatus value.
 
+**Metadata conventions**:
+- `metadata._internal`: Reserved for framework use; tasks with this key are hidden from TaskList tool output but remain in persistence (needed for dependency cleanup)
+- Null values in metadata updates delete the corresponding key (matching Claude Code behavior)
+
 ## 2. Persistence Layer
 
 **Storage location**: `~/.bitz/tasks/<project-slug>/`
@@ -57,7 +61,7 @@ class Task:
 ### Core Functions (`agent/tasks.py`)
 
 #### `create_task(project_slug, subject, description, active_form=None, metadata=None) -> Task`
-- Read all `*.json` files + `.highwatermark` to determine next ID
+- Scan `*.json` filenames (not contents) + read `.highwatermark` to determine next ID
 - Write `<id>.json` with status `pending`, empty `blocks`/`blockedBy`
 - Update `.highwatermark`
 - Return the created Task
@@ -66,13 +70,13 @@ class Task:
 - Read existing task, return None if not found
 - Apply updates (only changed fields)
 - For `status="deleted"`: delegate to `delete_task()`
-- For `add_blocks`: call `block_task()` for each
-- For `add_blocked_by`: call `block_task()` in reverse for each
+- For `add_blocks`: call `block_task(project_slug, task_id, block_id)` for each (task_id blocks block_id)
+- For `add_blocked_by`: call `block_task(project_slug, blocker_id, task_id)` for each (blocker_id blocks task_id)
 - Write updated task to JSON file
 - Return the updated Task
 
 #### `delete_task(project_slug, task_id) -> bool`
-- Update `.highwatermark` if this task's ID is the highest
+- Update `.highwatermark` to max(current_highwatermark, task_id_numeric)
 - Delete the JSON file
 - Clean up dependency references in all other tasks (remove task_id from their `blocks` and `blockedBy`)
 - Return True if deleted, False if not found
@@ -80,24 +84,32 @@ class Task:
 #### `list_tasks(project_slug) -> list[Task]`
 - Read all `*.json` files from the task directory
 - Parse each with `get_task()`, skip None results
-- Filter out tasks with `metadata._internal`
-- Return all tasks
+- Return all tasks (including `_internal` — filtering is a tool-layer concern)
 
 #### `get_task(project_slug, task_id) -> Task | None`
 - Read `<task_id>.json`
 - Parse and return Task, or None if file doesn't exist or is corrupt
 
 #### `block_task(project_slug, blocker_id, blocked_id) -> bool`
-- Detect circular dependencies (DFS from blocked_id, check if blocker_id is reachable)
+- Creates bidirectional dependency link (same as Claude Code's `blockTask`)
+- `blocker_id.blocks` gains `blocked_id`; `blocked_id.blockedBy` gains `blocker_id`
+- Detect circular dependencies via `has_cycle()` check before creating the link
 - If circular: return False
-- Update blocker task: add `blocked_id` to `blocks`
-- Update blocked task: add `blocker_id` to `blockedBy`
 - Write both tasks
 - Return True
+
+#### `has_cycle(all_tasks, start_id, target_id) -> bool`
+- DFS from `start_id` following `blocks` edges, check if `target_id` is reachable
+- Used by `block_task()` to prevent circular dependencies
 
 #### `is_blocked(task, all_tasks) -> bool`
 - Check if any task in `task.blockedBy` has status != `completed`
 - Return True if any unresolved blocker exists
+- Used by TaskList tool to show blocked status
+
+#### `get_project_slug() -> str`
+- Returns `sanitize_path(os.getcwd())` using `sanitize_path` from `agent/session.py`
+- Ensures consistent slug generation with session persistence
 
 ### ID Generation Logic
 
@@ -168,7 +180,7 @@ Four new tools registered in `agent/builtin_tools.py`, following the existing to
 - `status: "deleted"` -> call `delete_task()`, return early
 - `add_blocks` -> call `block_task(project_slug, task_id, block_id)` for each
 - `add_blocked_by` -> call `block_task(project_slug, blocker_id, task_id)` for each
-- Return `"Updated task #<id>: <changed_fields>"`
+- Return `"Updated task #<id> <changed_fields>"`
 
 ### TaskList
 
@@ -192,7 +204,14 @@ Four new tools registered in `agent/builtin_tools.py`, following the existing to
 }
 ```
 
-**Behavior**: Return full task details (subject, description, status, blocks, blockedBy)
+**Behavior**: Return full task details formatted as:
+```
+Task #<id>: <subject>
+Status: <status>
+Description: <description>
+Blocked by: #<id>, #<id>
+Blocks: #<id>
+```
 
 ## 4. TUI Integration
 
@@ -204,10 +223,12 @@ A Textual widget that displays the current task list, modeled after Claude Code'
 ```
 Tasks (2/5)
 ─────────────
-◉ Fix auth bug          [in_progress]
-○ Write tests           [blocked by #1]
-✓ Setup project         [completed]
+◉ Fixing auth bug...     [in_progress]
+○ Write tests            [blocked by #1]
+✓ Setup project          [completed]
 ```
+
+When a task is `in_progress` and has an `activeForm`, the TUI shows the `activeForm` text instead of `subject` (matching Claude Code's spinner behavior).
 
 **Status icons**:
 - `◉` (in_progress, colored)
@@ -217,7 +238,7 @@ Tasks (2/5)
 **Priority ordering** (same as Claude Code):
 1. Recently completed (within 30s) > in_progress > pending > older completed
 
-**Auto-hide**: Collapse 5 seconds after all tasks complete.
+**Auto-hide**: Collapse 5 seconds after all tasks complete. Tasks remain persisted on disk (unlike Claude Code which auto-deletes completed tasks — Bitz preserves them for review).
 
 **Max display**: 10 items.
 
@@ -227,9 +248,9 @@ Tasks (2/5)
 
 ### Integration Points
 
-1. **ChatScreen**: Add TaskListWidget as a collapsible panel above or below the chat area
+1. **BitzApp**: Add TaskListWidget in `BitzApp.compose()` alongside `ChatLog`, as a collapsible panel above the chat area
 2. **StatusBar**: Show task count (e.g., "Tasks: 2/5")
-3. **Tool execution callback**: After task tools execute, call `task_list_widget.refresh()`
+3. **Tool execution callback**: After task tools execute, call `task_list_widget.refresh()` via `BitzApp._install_tool_logger()`
 
 ## 5. Error Handling
 
@@ -242,19 +263,63 @@ Tasks (2/5)
 | Invalid status transition | Allow any transition (same as Claude Code) |
 | `.highwatermark` missing | Rebuild from existing files |
 
-## 6. Testing Strategy
+## 6. Tool Prompts
 
-- **Unit tests** (`tests/test_tasks.py`): CRUD operations, dependency management, circular dependency detection, edge cases
-- **Tool tests** (`tests/test_task_tools.py`): Tool input validation, tool execution in agent loop context
-- **TUI tests** (`tests/test_task_list_widget.py`): Widget rendering, status display, auto-hide behavior
+Each task tool needs a description/prompt for the LLM to understand when and how to use it. These are modeled after Claude Code's `prompt.ts` files but adapted for Bitz's single-agent context.
 
-## 7. File Changes Summary
+### TaskCreate prompt (key points)
+- Use proactively when starting a non-trivial implementation task (3+ steps)
+- Create tasks with clear, specific subjects in imperative form
+- Use `activeForm` for in-progress spinner text
+- Don't create tasks for trivial single-step actions
+
+### TaskUpdate prompt (key points)
+- Mark tasks `in_progress` before starting work, `completed` when done
+- Use `deleted` status to remove tasks that are no longer relevant
+- Set up `add_blocks`/`add_blocked_by` for task dependencies
+- Never mark a task completed unless fully accomplished
+
+### TaskList prompt (key points)
+- Use to check what tasks are available or track overall progress
+- Tasks with `blockedBy` cannot start until blockers complete
+
+### TaskGet prompt (key points)
+- Use when you need full task details before starting work
+- Check `blockedBy` to understand what must complete first
+
+## 7. Testing Strategy
+
+- **Unit tests** (`tests/test_tasks.py`):
+  - CRUD operations (create, read, update, delete)
+  - Dependency management (block_task, has_cycle, is_blocked)
+  - Circular dependency detection (A->B->C->A should be rejected)
+  - Highwatermark behavior after deletion (deleted IDs never reused)
+  - Metadata merge and null-deletion
+  - Corrupt JSON handling
+  - Missing directory auto-creation
+  - `_internal` metadata filtering (in tool layer, not persistence)
+- **Tool tests** (`tests/test_task_tools.py`):
+  - Tool input validation (required fields, invalid status)
+  - Tool execution in agent loop context
+  - TaskCreate creates with correct defaults
+  - TaskUpdate handles `deleted` status correctly
+  - TaskList filters `_internal` tasks and unresolved blockers
+  - TaskGet returns formatted output
+- **TUI tests** (`tests/test_task_list_widget.py`):
+  - Widget rendering with Textual `app.run_test()`
+  - Status display and icon mapping
+  - activeForm shown for in_progress tasks
+  - Auto-hide after all tasks complete
+  - Priority ordering
+  - Use pytest fixtures for temporary task directories
+
+## 8. File Changes Summary
 
 | File | Action | Description |
 |---|---|---|
 | `agent/tasks.py` | **New** | Task data model + persistence layer |
 | `agent/builtin_tools.py` | **Modify** | Add 4 task tool definitions |
 | `tui/widgets/task_list.py` | **New** | TaskListWidget component |
-| `tui/app.py` | **Modify** | Integrate TaskListWidget into ChatScreen |
+| `tui/app.py` | **Modify** | Integrate TaskListWidget into BitzApp |
 | `tests/test_tasks.py` | **New** | Unit tests for task persistence |
 | `tests/test_task_tools.py` | **New** | Integration tests for task tools |
