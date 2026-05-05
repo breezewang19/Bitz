@@ -57,9 +57,9 @@ class BitzApp(App):
         self._total_output_tokens: int = 0
 
     def compose(self) -> ComposeResult:
-        yield TaskListWidget(id="task-list", project_slug=get_project_slug())
         yield ChatLog()
         yield ThinkingIndicator()
+        yield TaskListWidget(id="task-list", project_slug=get_project_slug())
         yield StatusBar()
         yield InputBar(skill_registry=self._skill_registry)
 
