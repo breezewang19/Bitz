@@ -276,3 +276,38 @@ class TestTaskGetTool:
         # task_get should be able to retrieve internal tasks
         assert "Task #1" in result
         assert "Internal" in result
+
+
+# ---------------------------------------------------------------------------
+# TestTaskToolDescriptions
+# ---------------------------------------------------------------------------
+
+
+class TestTaskToolDescriptions:
+    def test_task_create_description_has_when_to_use(self):
+        tools = create_tools()
+        desc = tools.tools["task_create"].description
+        assert "何时使用" in desc
+        assert "何时不使用" in desc
+        assert "字段" in desc
+        assert "提示" in desc
+
+    def test_task_update_description_has_completion_conditions(self):
+        tools = create_tools()
+        desc = tools.tools["task_update"].description
+        assert "何时使用" in desc
+        assert "完成条件" in desc
+        assert "可更新字段" in desc
+        assert "示例" in desc
+
+    def test_task_list_description_has_output(self):
+        tools = create_tools()
+        desc = tools.tools["task_list"].description
+        assert "何时使用" in desc
+        assert "输出" in desc
+
+    def test_task_get_description_has_tips(self):
+        tools = create_tools()
+        desc = tools.tools["task_get"].description
+        assert "何时使用" in desc
+        assert "提示" in desc

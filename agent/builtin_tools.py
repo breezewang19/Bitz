@@ -453,7 +453,32 @@ def create_tools() -> ToolRegistry:
 
     tools.register(
         name="task_create",
-        description="Create a new task. Returns the task ID and subject.",
+        description=(
+            "为当前编码会话创建结构化任务列表，帮助跟踪进度、组织复杂任务。\n"
+            "\n"
+            "## 何时使用\n"
+            "- 复杂多步骤任务（3 步以上）\n"
+            "- 需要仔细规划或多步操作的任务\n"
+            "- 用户给出多个任务（编号或逗号分隔）\n"
+            "- 收到新指令后，立即将需求捕获为任务\n"
+            "- 开始工作时，先标记为 in_progress\n"
+            "\n"
+            "## 何时不使用\n"
+            "- 单一简单任务\n"
+            "- 任务可在 3 步以内轻松完成\n"
+            "- 纯对话或信息查询\n"
+            "\n"
+            "## 字段\n"
+            "- subject: 简短的祈使句标题（如\"修复登录流程的认证 bug\"）\n"
+            "- description: 详细需求说明\n"
+            "- activeForm: 进行中时显示在 spinner 的文本（如\"修复认证 bug\"），省略则显示 subject\n"
+            "\n"
+            "所有任务创建时状态为 pending。\n"
+            "\n"
+            "## 提示\n"
+            "- 创建后用 task_update 设置依赖关系（blocks/blockedBy）\n"
+            "- 先用 task_list 检查，避免创建重复任务"
+        ),
         input_schema={
             "type": "object",
             "properties": {
@@ -469,7 +494,37 @@ def create_tools() -> ToolRegistry:
 
     tools.register(
         name="task_update",
-        description="Update an existing task. Set status to 'deleted' to delete it. Use add_blocks/add_blocked_by to set dependencies.",
+        description=(
+            "更新任务列表中的任务。\n"
+            "\n"
+            "## 何时使用\n"
+            "- 开始工作时标记为 in_progress\n"
+            "- 完成工作时标记为 completed\n"
+            "- 任务不再需要时标记为 deleted\n"
+            "- 需求变化时更新描述\n"
+            "- 设置任务间依赖关系\n"
+            "\n"
+            "## 完成条件\n"
+            "仅在以下情况标记 completed：\n"
+            "- 测试通过\n"
+            "- 实现完整\n"
+            "- 无未解决错误\n"
+            "\n"
+            "如果遇到阻塞或无法完成，保持 in_progress 并创建新任务描述阻塞原因。\n"
+            "\n"
+            "## 可更新字段\n"
+            "- status: pending → in_progress → completed；deleted 永久删除\n"
+            "- subject/description/activeForm: 更新任务内容\n"
+            "- metadata: 合并元数据（设为 null 删除键）\n"
+            "- add_blocks: 标记此任务完成后才能开始的任务\n"
+            "- add_blocked_by: 标记必须先完成的任务\n"
+            "\n"
+            "## 示例\n"
+            "开始工作：{\"task_id\": \"1\", \"status\": \"in_progress\"}\n"
+            "完成工作：{\"task_id\": \"1\", \"status\": \"completed\"}\n"
+            "删除任务：{\"task_id\": \"1\", \"status\": \"deleted\"}\n"
+            "设置依赖：{\"task_id\": \"2\", \"add_blocked_by\": [\"1\"]}"
+        ),
         input_schema={
             "type": "object",
             "properties": {
@@ -502,7 +557,19 @@ def create_tools() -> ToolRegistry:
 
     tools.register(
         name="task_list",
-        description="List all visible tasks (hides internal tasks). Shows status and blocked-by info.",
+        description=(
+            "列出任务列表中的所有任务。\n"
+            "\n"
+            "## 何时使用\n"
+            "- 查看可用任务（pending 且未被阻塞）\n"
+            "- 检查项目整体进度\n"
+            "- 寻找被阻塞的任务\n"
+            "- 完成一个任务后，查看下一个可用任务\n"
+            "- 多个任务可用时，优先按 ID 顺序处理（低 ID 先做）\n"
+            "\n"
+            "## 输出\n"
+            "每条任务显示：#id [状态] 标题，如有未解决的阻塞则显示 [blocked by #id]"
+        ),
         input_schema={
             "type": "object",
             "properties": {},
@@ -512,7 +579,25 @@ def create_tools() -> ToolRegistry:
 
     tools.register(
         name="task_get",
-        description="Get detailed information about a specific task, including dependencies.",
+        description=(
+            "按 ID 获取任务详情。\n"
+            "\n"
+            "## 何时使用\n"
+            "- 开始工作前获取完整描述和上下文\n"
+            "- 理解任务依赖（它阻塞谁、谁阻塞它）\n"
+            "- 获取完整需求后再开始工作\n"
+            "\n"
+            "## 输出\n"
+            "- subject: 任务标题\n"
+            "- description: 详细需求和上下文\n"
+            "- status: pending/in_progress/completed\n"
+            "- blocks: 等待此任务完成的任务\n"
+            "- blockedBy: 必须先完成的任务\n"
+            "\n"
+            "## 提示\n"
+            "- 获取任务后，先检查 blockedBy 是否为空再开始工作\n"
+            "- 用 task_list 查看所有任务概览"
+        ),
         input_schema={
             "type": "object",
             "properties": {
