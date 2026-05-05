@@ -16,6 +16,7 @@ RULES = """## 工具使用
 - 修改文件前先读取确认内容，避免盲改
 - 用 glob 按模式搜索文件，用 grep 按内容搜索
 - fetch 仅用于获取网页内容，不要用它读本地文件
+- 用 task_create 拆分复杂任务，用 task_update 跟踪进度（开始时标记 in_progress，完成时标记 completed），不要批量标记完成
 
 ## 输出
 - 用中文回复
