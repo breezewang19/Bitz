@@ -59,6 +59,20 @@ class Context:
         self._trim()
         self._persist(msg)
 
+    def add_system_reminder(self, text: str) -> None:
+        """Add a system reminder as a user message.
+
+        The reminder is stored with a _meta key for internal tracking.
+        get_messages() strips _meta before returning messages to the API.
+        Intentionally skips _persist(): reminders are ephemeral nudges.
+        """
+        self.messages.append({
+            "role": "user",
+            "content": text,
+            "_meta": True,
+        })
+        self._trim()
+
     def set_active_skill(self, skill) -> None:
         """设置当前活跃的 Skill"""
         self._active_skill = skill
@@ -100,9 +114,11 @@ class Context:
             self._persist_error = True
 
     def get_messages(self) -> list[dict]:
-        """返回完整消息列表（system 作为独立条目）"""
+        """返回完整消息列表（system 作为独立条目），剥离非标准键"""
         msgs = [{"role": "system", "content": self.system_prompt}]
-        msgs.extend(self.messages)
+        for msg in self.messages:
+            clean = {k: v for k, v in msg.items() if k in ("role", "content")}
+            msgs.append(clean)
 
         if self._active_skill:
             skill = self._active_skill

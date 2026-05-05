@@ -146,3 +146,51 @@ def test_context_add_tool_result_delegates_to_results():
     ctx.add_tool_result("t1", "output")
     assert len(store.entries) == 1
     assert store.entries[0]["role"] == "user"
+
+
+def test_context_add_system_reminder():
+    """add_system_reminder appends a user message with _meta flag."""
+    ctx = Context(system_prompt="test")
+    ctx.add_system_reminder("Don't forget to use task tools!")
+    assert len(ctx.messages) == 1
+    assert ctx.messages[0]["role"] == "user"
+    assert ctx.messages[0]["content"] == "Don't forget to use task tools!"
+    assert ctx.messages[0].get("_meta") is True
+
+
+def test_context_get_messages_strips_meta():
+    """get_messages strips _meta key before returning to API."""
+    ctx = Context(system_prompt="test", keep_last_n=5)
+    ctx.add_user("Hello")
+    ctx.add_system_reminder("Use task tools!")
+    msgs = ctx.get_messages()
+    # System prompt + user message + reminder message
+    assert len(msgs) == 3
+    # Reminder message should NOT have _meta key
+    reminder_msg = msgs[2]
+    assert reminder_msg["role"] == "user"
+    assert reminder_msg["content"] == "Use task tools!"
+    assert "_meta" not in reminder_msg
+
+
+def test_context_add_system_reminder_trims():
+    """add_system_reminder calls _trim like other add methods."""
+    ctx = Context(system_prompt="test", keep_last_n=2)
+    ctx.add_user("Message 1")
+    ctx.add_user("Message 2")
+    ctx.add_system_reminder("Reminder")
+    # After trim, only last 2 messages kept
+    assert len(ctx.messages) == 2
+    assert ctx.messages[0]["content"] == "Message 2"
+    assert ctx.messages[1]["content"] == "Reminder"
+
+
+def test_context_add_system_reminder_no_persist():
+    """add_system_reminder intentionally skips _persist (ephemeral)."""
+    store = FakeSessionStore()
+    ctx = Context(system_prompt="test", session_id="s1", session_store=store)
+    ctx.add_user("hello")
+    ctx.add_system_reminder("reminder")
+    # Only the user message should be persisted, not the reminder
+    assert len(store.entries) == 1
+    assert store.entries[0]["content"] == "hello"
