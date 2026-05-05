@@ -2,6 +2,7 @@
 """内置工具定义 - Agent 的核心能力"""
 import subprocess
 import re
+import shlex
 import urllib.request
 
 from agent.tools import ToolRegistry
@@ -88,6 +89,56 @@ SPAWN_TOOL_DEF = {
 }
 
 
+READONLY_COMMANDS: dict[str, set[str] | None] = {
+    "ls": None, "cat": None, "head": None, "tail": None,
+    "grep": None, "find": None, "wc": None, "file": None,
+    "echo": None, "pwd": None, "whoami": None, "which": None,
+    "env": None, "printenv": None, "uname": None, "date": None,
+    "df": None, "du": None, "tree": None, "stat": None, "diff": None,
+    "less": None, "more": None, "rg": None, "ag": None, "ack": None,
+    "locate": None, "whereis": None, "type": None, "id": None,
+    "hostname": None, "printf": None, "test": None,
+    "git": {"status", "log", "diff", "show", "branch", "tag",
+            "remote", "stash", "blame", "shortlog", "describe",
+            "reflog", "ls-files", "ls-remote", "ls-tree",
+            "rev-parse", "rev-list", "config"},
+    "gh": {"pr", "view", "list", "api", "issue", "repo"},
+    "npm": {"list", "ls", "view", "info", "outdated", "audit"},
+}
+
+_REDIRECT_PATTERN = re.compile(r'[|>;]')
+_COMMAND_SUBSTITUTION_PATTERN = re.compile(r'\$\(|`')
+_QUOTED_STRING_PATTERN = re.compile(r"'[^']*'|\"[^\"]*\"")
+
+def bash_is_readonly(command: str) -> bool:
+    """Check if a bash command is read-only. Used for both auto-approval and readonly permission mode."""
+    try:
+        parts = shlex.split(command.strip())
+    except ValueError:
+        return False
+    if not parts:
+        return True
+    # Check for dangerous metacharacters, but ignore content inside quotes
+    unquoted = _QUOTED_STRING_PATTERN.sub('', command)
+    if _REDIRECT_PATTERN.search(unquoted) or _COMMAND_SUBSTITUTION_PATTERN.search(unquoted):
+        return False
+    base = parts[0]
+    if "/" in base:
+        base = base.rsplit("/", 1)[-1]
+    allowed_subcmds = READONLY_COMMANDS.get(base)
+    if allowed_subcmds is None:
+        return base in READONLY_COMMANDS
+    subcmd = None
+    for part in parts[1:]:
+        if not part.startswith("-"):
+            subcmd = part
+            break
+    if subcmd is None:
+        has_flags = any(p.startswith("-") for p in parts[1:])
+        return has_flags
+    return subcmd in allowed_subcmds
+
+
 def _truncate(text: str, limit: int = MAX_OUTPUT) -> str:
     """截断过长文本，保留首尾，中间省略"""
     if len(text) <= limit:
@@ -101,14 +152,6 @@ def _truncate(text: str, limit: int = MAX_OUTPUT) -> str:
 def create_tools() -> ToolRegistry:
     """创建并注册所有内置工具"""
     tools = ToolRegistry()
-
-    # 只读命令白名单：这些命令自动批准，不需要确认
-    READONLY_COMMANDS = {
-        'ls', 'pwd', 'echo', 'cat', 'head', 'tail', 'wc', 'find', 'which',
-        'whoami', 'hostname', 'date', 'uname', 'df', 'du', 'env', 'printenv',
-        'git status', 'git log', 'git diff', 'git branch', 'git remote',
-        'git show', 'git blame', 'git tag',
-    }
 
     # 额外的危险命令关键词
     DANGEROUS_PATTERNS = [
@@ -128,19 +171,6 @@ def create_tools() -> ToolRegistry:
             return _truncate(output)
         except Exception as e:
             return f"Error: {e}"
-
-    def bash_is_readonly(command: str) -> bool:
-        """判断命令是否为只读命令"""
-        stripped = command.strip()
-        # 精确匹配白名单
-        if stripped in READONLY_COMMANDS:
-            return True
-        # 白名单前缀匹配（如 "ls -la", "git log --oneline"）
-        first_word = stripped.split()[0] if stripped.split() else ""
-        for ro in READONLY_COMMANDS:
-            if ro.startswith(first_word) and stripped.startswith(ro):
-                return True
-        return False
 
     def bash_is_dangerous(command: str) -> bool:
         """判断命令是否包含危险操作"""

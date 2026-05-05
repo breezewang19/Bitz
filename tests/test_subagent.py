@@ -8,7 +8,8 @@ from agent.subagent import SubAgentResult, SubAgentSpec
 from agent.loop import Agent
 from agent.context import Context
 from agent.adapter import LLMAdapter, LLMError
-from agent.tools import ToolRegistry, _is_readonly_command
+from agent.tools import ToolRegistry
+from agent.builtin_tools import bash_is_readonly
 from agent.subagent import SubAgent, run_parallel
 
 
@@ -596,34 +597,34 @@ class TestReadonlyEnforcement:
 
 
 class TestIsReadonlyCommand:
-    """Test the _is_readonly_command function used for enforcement."""
+    """Test the bash_is_readonly function used for enforcement."""
 
     def test_ls_is_readonly(self):
-        assert _is_readonly_command("ls -la") is True
+        assert bash_is_readonly("ls -la") is True
 
     def test_cat_is_readonly(self):
-        assert _is_readonly_command("cat file.txt") is True
+        assert bash_is_readonly("cat file.txt") is True
 
     def test_git_status_is_readonly(self):
-        assert _is_readonly_command("git status") is True
+        assert bash_is_readonly("git status") is True
 
     def test_git_log_is_readonly(self):
-        assert _is_readonly_command("git log --oneline") is True
+        assert bash_is_readonly("git log --oneline") is True
 
     def test_rm_not_readonly(self):
-        assert _is_readonly_command("rm -rf /tmp") is False
+        assert bash_is_readonly("rm -rf /tmp") is False
 
     def test_pip_install_not_readonly(self):
-        assert _is_readonly_command("pip install foo") is False
+        assert bash_is_readonly("pip install foo") is False
 
     def test_echo_with_redirect_not_readonly(self):
-        assert _is_readonly_command("echo hello > file.txt") is False
+        assert bash_is_readonly("echo hello > file.txt") is False
 
     def test_pipe_not_readonly(self):
-        assert _is_readonly_command("cat file | grep pattern") is False
+        assert bash_is_readonly("cat file | grep pattern") is False
 
     def test_empty_is_readonly(self):
-        assert _is_readonly_command("") is True
+        assert bash_is_readonly("") is True
 
 
 class TestOnEventCallback:
