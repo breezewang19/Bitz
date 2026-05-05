@@ -189,7 +189,11 @@ The caller in `loop.py` obtains `task_summary` by calling a helper function in `
 
 ```python
 def get_task_summary(project_slug: str, base_dir: str | None = None) -> str | None:
-    """Return a formatted task list string for active tasks, or None."""
+    """Return a formatted task list string for active tasks, or None.
+
+    Filtering mirrors task_list_handler in builtin_tools.py:
+    exclude _internal tasks, show only pending/in_progress.
+    """
     from agent.tasks import list_tasks
     all_tasks = list_tasks(project_slug, base_dir=base_dir)
     active = [t for t in all_tasks
@@ -217,6 +221,10 @@ After the context is updated with the current turn's results (after `context.add
 
 This injection position ensures the reminder appears after the current turn's tool results, maintaining correct message ordering for the Anthropic API.
 
+**Step count semantics**: `_step_count` in `loop.py` only increments in the `tool_use` branch. The reminder threshold (10) therefore means "10 tool-use turns since last task tool use." End-turn responses do not count as steps. This is intentional: reminders are designed for tool-heavy workflows where the agent is actively working but neglecting task tracking. Pure conversation turns don't need task reminders.
+
+**`confirm_pending` path**: When tools are confirmed via `Agent.confirm_pending()`, the same task tool check and reminder logic should apply. Add the check after the confirmed tool results are written to context in `confirm_pending()`, mirroring the logic in the `tool_use` branch.
+
 ### Context Support: `agent/context.py`
 
 Add method:
@@ -232,6 +240,9 @@ def add_system_reminder(self, text: str) -> None:
         "content": text,
         "_meta": True,
     })
+    self._trim()
+    # Intentionally skip _persist(): reminders are ephemeral nudges,
+    # not part of the permanent conversation record.
 ```
 
 **API safety**: `get_messages()` must strip the `_meta` key before returning messages to the Anthropic API. Modify `get_messages()` to remove any non-standard keys from message dicts:
@@ -245,6 +256,10 @@ def get_messages(self) -> list[dict]:
         result.append(clean)
     return result
 ```
+
+**Consecutive user messages**: The reminder is injected after `add_tool_results()`, which creates a `user` role message. This results in consecutive `user` messages (tool_result then reminder). The Anthropic API accepts this pattern — multiple `user` messages are merged automatically. No special handling needed.
+
+**Persistence decision**: `_persist()` is intentionally skipped for reminder messages. They are ephemeral nudges that should not survive session restore. If a session is restored, the agent will naturally re-engage with task tools or trigger a fresh reminder after the threshold is met again.
 
 **Trimming behavior**: `_meta` messages are subject to normal `_trim()` behavior — they are ephemeral nudges, not permanent context. They will be trimmed like any other message when they fall outside the `keep_last_n` window. `_meta` messages must never appear between a `tool_use` and its corresponding `tool_result` (guaranteed by the injection position after tool results are written).
 
