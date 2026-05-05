@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 from agent.adapter import LLMAdapter, LLMResponse, LLMError
 from agent.loop import Agent
 from agent.context import Context
+from agent.tool_result import ToolResult
 
 
 class TestAdapterCancel:
@@ -129,7 +130,7 @@ class TestAgentCancel:
             ),
             LLMError("用户按 ESC 取消了请求")
         ]
-        mock_tools.execute.return_value = "result"
+        mock_tools.execute.return_value = ToolResult.ok("result")
 
         ctx = Context(system_prompt="test")
         agent = Agent(
