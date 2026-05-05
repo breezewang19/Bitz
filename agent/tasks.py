@@ -270,28 +270,29 @@ def block_task(
     Returns ``False`` if a circular dependency would result or either task
     doesn't exist.  Returns ``True`` on success.
     """
-    # Load both tasks
-    blocker = get_task(project_slug, blocker_id, session_id=session_id, base_dir=base_dir)
-    blocked = get_task(project_slug, blocked_id, session_id=session_id, base_dir=base_dir)
-    if blocker is None or blocked is None:
-        return False
-
-    # Check for circular dependency: would adding blocker->blocked create a
-    # path from blocked back to blocker?
-    all_tasks = list_tasks(project_slug, session_id=session_id, base_dir=base_dir)
-    if has_cycle(all_tasks, start_id=blocked_id, target_id=blocker_id):
-        return False
-
     tasks_dir = _get_tasks_dir(project_slug, session_id, base_dir)
 
-    # Apply bidirectional links
-    if blocked_id not in blocker.blocks:
-        blocker.blocks.append(blocked_id)
-        _write_task(tasks_dir, blocker)
+    with _TaskDirLock(tasks_dir):
+        # Load both tasks
+        blocker = get_task(project_slug, blocker_id, session_id=session_id, base_dir=base_dir)
+        blocked = get_task(project_slug, blocked_id, session_id=session_id, base_dir=base_dir)
+        if blocker is None or blocked is None:
+            return False
 
-    if blocker_id not in blocked.blockedBy:
-        blocked.blockedBy.append(blocker_id)
-        _write_task(tasks_dir, blocked)
+        # Check for circular dependency: would adding blocker->blocked create a
+        # path from blocked back to blocker?
+        all_tasks = list_tasks(project_slug, session_id=session_id, base_dir=base_dir)
+        if has_cycle(all_tasks, start_id=blocked_id, target_id=blocker_id):
+            return False
+
+        # Apply bidirectional links
+        if blocked_id not in blocker.blocks:
+            blocker.blocks.append(blocked_id)
+            _write_task(tasks_dir, blocker)
+
+        if blocker_id not in blocked.blockedBy:
+            blocked.blockedBy.append(blocker_id)
+            _write_task(tasks_dir, blocked)
 
     return True
 
@@ -322,9 +323,6 @@ def update_task(
     - ``metadata``: shallow-merged with null-deletion.
     """
     tasks_dir = _get_tasks_dir(project_slug, session_id, base_dir)
-    task = get_task(project_slug, task_id, session_id=session_id, base_dir=base_dir)
-    if task is None:
-        return None
 
     # --- Handle status="deleted" as a delete action ---
     status_update = updates.get("status")
@@ -336,46 +334,46 @@ def update_task(
     add_blocks = updates.pop("add_blocks", None)
     add_blocked_by = updates.pop("add_blocked_by", None)
 
-    # --- Apply scalar / simple fields ---
-    if "status" in updates:
-        task.status = TaskStatus(updates.pop("status"))
-        if task.status == TaskStatus.COMPLETED:
-            task.metadata["_completedAt"] = time.time()
-    if "subject" in updates:
-        task.subject = updates.pop("subject")
-    if "description" in updates:
-        task.description = updates.pop("description")
-    if "active_form" in updates:
-        task.activeForm = updates.pop("active_form")
+    with _TaskDirLock(tasks_dir):
+        task = get_task(project_slug, task_id, session_id=session_id, base_dir=base_dir)
+        if task is None:
+            return None
 
-    # --- Metadata: shallow merge with null-deletion ---
-    meta_update = updates.pop("metadata", None)
-    if meta_update is not None:
-        for k, v in meta_update.items():
-            if v is None:
-                task.metadata.pop(k, None)
-            else:
-                task.metadata[k] = v
+        # --- Apply scalar / simple fields ---
+        if "status" in updates:
+            task.status = TaskStatus(updates.pop("status"))
+            if task.status == TaskStatus.COMPLETED:
+                task.metadata["_completedAt"] = time.time()
+        if "subject" in updates:
+            task.subject = updates.pop("subject")
+        if "description" in updates:
+            task.description = updates.pop("description")
+        if "active_form" in updates:
+            task.activeForm = updates.pop("active_form")
 
-    # --- Dependency links (delegated to block_task) ---
+        # --- Metadata: shallow merge with null-deletion ---
+        meta_update = updates.pop("metadata", None)
+        if meta_update is not None:
+            for k, v in meta_update.items():
+                if v is None:
+                    task.metadata.pop(k, None)
+                else:
+                    task.metadata[k] = v
+
+        # --- Persist ---
+        _write_task(tasks_dir, task)
+
+    # --- Dependency links (block_task has its own file-level locking) ---
     if add_blocks:
         for block_id in add_blocks:
             block_task(project_slug, task_id, block_id, session_id=session_id, base_dir=base_dir)
-        # Refresh task from disk to reflect changes made by block_task
-        task = get_task(project_slug, task_id, session_id=session_id, base_dir=base_dir)
-        if task is None:
-            return None
-
     if add_blocked_by:
         for blocker_id in add_blocked_by:
             block_task(project_slug, blocker_id, task_id, session_id=session_id, base_dir=base_dir)
-        # Refresh task from disk to reflect changes made by block_task
-        task = get_task(project_slug, task_id, session_id=session_id, base_dir=base_dir)
-        if task is None:
-            return None
 
-    # --- Persist ---
-    _write_task(tasks_dir, task)
+    if add_blocks or add_blocked_by:
+        task = get_task(project_slug, task_id, session_id=session_id, base_dir=base_dir)
+
     return task
 
 
@@ -394,31 +392,33 @@ def delete_task(
     - Returns ``True`` if deleted, ``False`` if not found.
     """
     tasks_dir = _get_tasks_dir(project_slug, session_id, base_dir)
-    task_path = tasks_dir / f"{task_id}.json"
-    if not task_path.exists():
-        return False
 
-    # --- Update high-water mark ---
-    current_hw = _read_highwatermark(tasks_dir)
-    task_id_num = int(task_id) if task_id.isdigit() else 0
-    new_hw = max(current_hw, task_id_num)
-    _write_highwatermark(tasks_dir, new_hw)
+    with _TaskDirLock(tasks_dir):
+        task_path = tasks_dir / f"{task_id}.json"
+        if not task_path.exists():
+            return False
 
-    # --- Delete the file ---
-    task_path.unlink()
+        # --- Update high-water mark ---
+        current_hw = _read_highwatermark(tasks_dir)
+        task_id_num = int(task_id) if task_id.isdigit() else 0
+        new_hw = max(current_hw, task_id_num)
+        _write_highwatermark(tasks_dir, new_hw)
 
-    # --- Clean up dependency references in all other tasks ---
-    all_tasks = list_tasks(project_slug, session_id=session_id, base_dir=base_dir)
-    for other in all_tasks:
-        changed = False
-        if task_id in other.blocks:
-            other.blocks.remove(task_id)
-            changed = True
-        if task_id in other.blockedBy:
-            other.blockedBy.remove(task_id)
-            changed = True
-        if changed:
-            _write_task(tasks_dir, other)
+        # --- Delete the file ---
+        task_path.unlink()
+
+        # --- Clean up dependency references in all other tasks ---
+        all_tasks = list_tasks(project_slug, session_id=session_id, base_dir=base_dir)
+        for other in all_tasks:
+            changed = False
+            if task_id in other.blocks:
+                other.blocks.remove(task_id)
+                changed = True
+            if task_id in other.blockedBy:
+                other.blockedBy.remove(task_id)
+                changed = True
+            if changed:
+                _write_task(tasks_dir, other)
 
     return True
 

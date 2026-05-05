@@ -1,5 +1,6 @@
 """Task data model and persistence CRUD tests"""
 import json
+import threading
 import pytest
 from pathlib import Path
 from agent.tasks import (
@@ -716,3 +717,34 @@ class TestConcurrentCreate:
 
         ids = [t.id for t in tasks]
         assert len(set(ids)) == n, f"Duplicate IDs found: {ids}"
+
+
+class TestConcurrentUpdate:
+    """Concurrent update_task should not cause data corruption."""
+
+    def test_concurrent_update_task_no_corruption(self, tmp_path):
+        """Concurrent update_task should not cause data corruption"""
+        from agent.tasks import create_task, update_task, get_task
+        slug = "test-concurrent"
+        task = create_task(slug, "Concurrent test", "desc", base_dir=tmp_path)
+        errors = []
+
+        def update_worker(status_val):
+            try:
+                update_task(slug, task.id, status=status_val, base_dir=tmp_path)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [
+            threading.Thread(target=update_worker, args=("in_progress",)),
+            threading.Thread(target=update_worker, args=("completed",)),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(errors) == 0
+        result = get_task(slug, task.id, base_dir=tmp_path)
+        assert result is not None
+        assert result.status.value in ("in_progress", "completed")
