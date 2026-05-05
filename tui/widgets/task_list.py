@@ -91,16 +91,23 @@ class TaskListWidget(Static):
 
     def _collapse(self) -> None:
         """Hide the widget (called by timer after all tasks completed)."""
-        self._clear()
+        self._hide_timer = None
+        self._has_content = False
+        self.update("")
 
     def _render_tasks(self, tasks: list) -> None:
         """Format and display tasks."""
         in_progress_count = sum(
             1 for t in tasks if t.status == TaskStatus.IN_PROGRESS
         )
+        completed_count = sum(
+            1 for t in tasks if t.status == TaskStatus.COMPLETED
+        )
         total = len(tasks)
 
-        header = f"Tasks ({in_progress_count}/{total})"
+        # Show completed count when all done, in_progress count otherwise
+        active_count = completed_count if completed_count == total else in_progress_count
+        header = f"Tasks ({active_count}/{total})"
         sep = "─" * 30
 
         lines = [header, sep]
