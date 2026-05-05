@@ -6,6 +6,7 @@ import shlex
 import urllib.request
 
 from agent.tools import ToolRegistry
+from agent.tool_result import ToolResult
 from agent.tasks import (
     create_task,
     get_task,
@@ -18,8 +19,6 @@ from agent.tasks import (
 
 # Module-level base_dir override (used by tests to redirect task storage).
 # When None, task functions use their default (~/.bitz/tasks).
-_TASK_BASE_DIR = None
-_TASK_SESSION_ID = None
 
 MAX_OUTPUT = 30000
 HALF_OUTPUT = MAX_OUTPUT // 2
@@ -162,81 +161,92 @@ def create_tools() -> ToolRegistry:
         '> /dev/sd', 'chmod 777', 'chown',
     ]
 
-    def bash_handler(command: str) -> str:
-        try:
-            result = subprocess.run(
-                command, shell=True, capture_output=True, text=True, timeout=30
-            )
-            output = result.stdout or result.stderr or "(no output)"
-            return _truncate(output)
-        except Exception as e:
-            return f"Error: {e}"
+    def bash_handler(args: dict, context) -> ToolResult:
+            command = args.get("command", "")
+            try:
+                result = subprocess.run(
+                    command, shell=True, capture_output=True, text=True, timeout=30
+                )
+                output = result.stdout or result.stderr or "(no output)"
+                return ToolResult.ok(_truncate(output))
+            except Exception as e:
+                return ToolResult.error(f"Error: {e}")
 
     def bash_is_dangerous(command: str) -> bool:
         """判断命令是否包含危险操作"""
         lower = command.lower()
         return any(p in lower for p in DANGEROUS_PATTERNS)
 
-    def read_file_handler(path: str) -> str:
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
-            return _truncate(content)
-        except Exception as e:
-            return f"Error: {e}"
+    def read_file_handler(args: dict, context) -> ToolResult:
+            path = args.get("path", "")
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                return ToolResult.ok(_truncate(content))
+            except Exception as e:
+                return ToolResult.error(f"Error: {e}")
 
-    def write_file_handler(path: str, content: str) -> str:
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(content)
-            return f"OK: wrote {len(content)} chars to {path}"
-        except Exception as e:
-            return f"Error: {e}"
+    def write_file_handler(args: dict, context) -> ToolResult:
+            path = args.get("path", "")
+            content = args.get("content", "")
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                return ToolResult.ok(f"OK: wrote {len(content)} chars to {path}")
+            except Exception as e:
+                return ToolResult.error(f"Error: {e}")
 
-    def edit_file_handler(path: str, old_string: str, new_string: str) -> str:
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
-            count = content.count(old_string)
-            if count == 0:
-                return f"Error: old_string not found in {path}"
-            if count > 1:
-                return f"Error: old_string found {count} times in {path}, must be unique"
-            content = content.replace(old_string, new_string)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(content)
-            return f"OK: replaced 1 match in {path}"
-        except Exception as e:
-            return f"Error: {e}"
+    def edit_file_handler(args: dict, context) -> ToolResult:
+            path = args.get("path", "")
+            old_string = args.get("old_string", "")
+            new_string = args.get("new_string", "")
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                count = content.count(old_string)
+                if count == 0:
+                    return ToolResult.error(f"Error: old_string not found in {path}")
+                if count > 1:
+                    return ToolResult.error(f"Error: old_string found {count} times in {path}, must be unique")
+                content = content.replace(old_string, new_string)
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                return ToolResult.ok(f"OK: replaced 1 match in {path}")
+            except Exception as e:
+                return ToolResult.error(f"Error: {e}")
 
-    def glob_handler(pattern: str) -> str:
-        import glob
-        try:
-            matches = glob.glob(pattern, recursive=True)
-            if not matches:
-                return "No files found"
-            return "\n".join(matches)
-        except Exception as e:
-            return f"Error: {e}"
+    def glob_handler(args: dict, context) -> ToolResult:
+            import glob as glob_mod
+            pattern = args.get("pattern", "")
+            try:
+                matches = glob_mod.glob(pattern, recursive=True)
+                if not matches:
+                    return ToolResult.ok("No files found")
+                return ToolResult.ok("\n".join(matches))
+            except Exception as e:
+                return ToolResult.error(f"Error: {e}")
 
-    def grep_handler(pattern: str, path: str = ".", include: str = "") -> str:
-        try:
-            cmd = ["grep", "-rn", "--color=never", pattern]
-            if include:
-                cmd.extend(["--include", include])
-            cmd.append(path)
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=15
-            )
-            output = result.stdout or result.stderr or "No matches found"
-            lines = output.splitlines()
-            if len(lines) > 50:
-                output = "\n".join(lines[:50]) + f"\n... ({len(lines) - 50} more lines)"
-            return output
-        except FileNotFoundError:
-            return "Error: grep not found on this system"
-        except Exception as e:
-            return f"Error: {e}"
+    def grep_handler(args: dict, context) -> ToolResult:
+            pattern = args.get("pattern", "")
+            path = args.get("path", ".")
+            include = args.get("include", "")
+            try:
+                cmd = ["grep", "-rn", "--color=never", pattern]
+                if include:
+                    cmd.extend(["--include", include])
+                cmd.append(path)
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=15
+                )
+                output = result.stdout or result.stderr or "No matches found"
+                lines = output.splitlines()
+                if len(lines) > 50:
+                    output = "\n".join(lines[:50]) + f"\n... ({len(lines) - 50} more lines)"
+                return ToolResult.ok(output)
+            except FileNotFoundError:
+                return ToolResult.error("Error: grep not found on this system")
+            except Exception as e:
+                return ToolResult.error(f"Error: {e}")
 
     # SSRF 保护：禁止访问内网地址
     BLOCKED_HOSTS = {
@@ -246,26 +256,27 @@ def create_tools() -> ToolRegistry:
         '::1',  # IPv6 localhost
     }
 
-    def fetch_handler(url: str) -> str:
-        try:
-            from urllib.parse import urlparse
-            parsed = urlparse(url)
-            hostname = parsed.hostname or ""
-            if hostname.lower() in BLOCKED_HOSTS or hostname.startswith(('10.', '172.16.', '172.17.', '172.18.', '172.19.', '172.2', '172.3', '192.168.')):
-                return "Error: access to internal/private addresses is blocked"
-            req = urllib.request.Request(url, headers={"User-Agent": "Bitz/1.0"})
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = resp.read(50000).decode("utf-8", errors="replace")
-                if resp.headers.get_content_type() and "html" in resp.headers.get_content_type():
-                    data = re.sub(r'<script[^>]*>.*?</script>', '', data, flags=re.DOTALL)
-                    data = re.sub(r'<style[^>]*>.*?</style>', '', data, flags=re.DOTALL)
-                    data = re.sub(r'<[^>]+>', ' ', data)
-                    data = re.sub(r'\s+', ' ', data).strip()
-                if len(data) > 10000:
-                    data = data[:10000] + "\n... (truncated)"
-                return data
-        except Exception as e:
-            return f"Error: {e}"
+    def fetch_handler(args: dict, context) -> ToolResult:
+            url = args.get("url", "")
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(url)
+                hostname = parsed.hostname or ""
+                if hostname.lower() in BLOCKED_HOSTS or hostname.startswith(('10.', '172.16.', '172.17.', '172.18.', '172.19.', '172.2', '172.3', '192.168.')):
+                    return ToolResult.error("Error: access to internal/private addresses is blocked")
+                req = urllib.request.Request(url, headers={"User-Agent": "Bitz/1.0"})
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    data = resp.read(50000).decode("utf-8", errors="replace")
+                    if resp.headers.get_content_type() and "html" in resp.headers.get_content_type():
+                        data = re.sub(r'<script[^>]*>.*?</script>', '', data, flags=re.DOTALL)
+                        data = re.sub(r'<style[^>]*>.*?</style>', '', data, flags=re.DOTALL)
+                        data = re.sub(r'<[^>]+>', ' ', data)
+                        data = re.sub(r'\s+', ' ', data).strip()
+                    if len(data) > 10000:
+                        data = data[:10000] + "\n... (truncated)"
+                    return ToolResult.ok(data)
+            except Exception as e:
+                return ToolResult.error(f"Error: {e}")
 
     tools.register(
         name="bash",
@@ -365,125 +376,140 @@ def create_tools() -> ToolRegistry:
         name=SPAWN_TOOL_DEF["name"],
         description=SPAWN_TOOL_DEF["description"],
         input_schema=SPAWN_TOOL_DEF["input_schema"],
-        handler=lambda **kwargs: "",  # 占位 handler，不会被调用
+        handler=lambda args, context: ToolResult.ok(""),  # placeholder, never called
     )
 
     # -----------------------------------------------------------------------
     # Task tools
     # -----------------------------------------------------------------------
 
-    def _task_kwargs():
+    def _task_kwargs(context):
         """Return common kwargs for task CRUD functions (slug, session_id, base_dir)."""
+        from pathlib import Path
         kw = {"project_slug": get_project_slug()}
-        # Inject session_id from the agent's context if available
-        if _TASK_SESSION_ID is not None:
-            kw["session_id"] = _TASK_SESSION_ID
-        if _TASK_BASE_DIR is not None:
-            kw["base_dir"] = _TASK_BASE_DIR
+        if context and context.session_id:
+            kw["session_id"] = context.session_id
+        if context and context.task_base_dir:
+            kw["base_dir"] = Path(context.task_base_dir)
         return kw
 
-    def task_create_handler(
-        subject: str,
-        description: str,
-        active_form: str | None = None,
-        metadata: dict | None = None,
-    ) -> str:
-        kw = _task_kwargs()
-        task = create_task(
-            kw.pop("project_slug"),
-            subject,
-            description,
-            active_form=active_form,
-            metadata=metadata,
-            **kw,
-        )
-        return f"Task #{task.id} created successfully: {task.subject}"
+    def task_create_handler(args: dict, context) -> ToolResult:
+        subject = args.get("subject", "")
+        description = args.get("description", "")
+        active_form = args.get("active_form")
+        metadata = args.get("metadata")
+        if not subject:
+            return ToolResult.error("Missing required field: subject")
+        if not description:
+            return ToolResult.error("Missing required field: description")
+        try:
+            kw = _task_kwargs(context)
+            task = create_task(
+                kw.pop("project_slug"),
+                subject,
+                description,
+                active_form=active_form,
+                metadata=metadata,
+                **kw,
+            )
+            return ToolResult.ok(f"Task #{task.id} created successfully: {task.subject}")
+        except Exception as e:
+            return ToolResult.error(str(e))
 
-    def task_update_handler(
-        task_id: str,
-        subject: str | None = None,
-        description: str | None = None,
-        active_form: str | None = None,
-        status: str | None = None,
-        metadata: dict | None = None,
-        add_blocks: list | None = None,
-        add_blocked_by: list | None = None,
-    ) -> str:
-        kw = _task_kwargs()
+    def task_update_handler(args: dict, context) -> ToolResult:
+        task_id = args.get("task_id", "")
+        subject = args.get("subject")
+        description = args.get("description")
+        active_form = args.get("active_form")
+        status = args.get("status")
+        metadata = args.get("metadata")
+        add_blocks = args.get("add_blocks")
+        add_blocked_by = args.get("add_blocked_by")
+        try:
+            kw = _task_kwargs(context)
 
-        # Handle deletion as a special case
-        if status == "deleted":
-            delete_task(kw.pop("project_slug"), task_id, **kw)
-            return f"Deleted task #{task_id}"
+            # Handle deletion as a special case
+            if status == "deleted":
+                delete_task(kw.pop("project_slug"), task_id, **kw)
+                return ToolResult.ok(f"Deleted task #{task_id}")
 
-        # Build updates dict from non-None params
-        updates: dict = {}
-        if subject is not None:
-            updates["subject"] = subject
-        if description is not None:
-            updates["description"] = description
-        if active_form is not None:
-            updates["active_form"] = active_form
-        if status is not None:
-            updates["status"] = status
-        if metadata is not None:
-            updates["metadata"] = metadata
-        if add_blocks is not None:
-            updates["add_blocks"] = add_blocks
-        if add_blocked_by is not None:
-            updates["add_blocked_by"] = add_blocked_by
+            # Build updates dict from non-None params
+            updates: dict = {}
+            if subject is not None:
+                updates["subject"] = subject
+            if description is not None:
+                updates["description"] = description
+            if active_form is not None:
+                updates["active_form"] = active_form
+            if status is not None:
+                updates["status"] = status
+            if metadata is not None:
+                updates["metadata"] = metadata
+            if add_blocks is not None:
+                updates["add_blocks"] = add_blocks
+            if add_blocked_by is not None:
+                updates["add_blocked_by"] = add_blocked_by
 
-        result = update_task(kw.pop("project_slug"), task_id, **updates, **kw)
-        if result is None:
-            return f"Task #{task_id} not found"
+            result = update_task(kw.pop("project_slug"), task_id, **updates, **kw)
+            if result is None:
+                return ToolResult.ok(f"Task #{task_id} not found")
 
-        changed_fields = ", ".join(updates.keys())
-        return f"Updated task #{task_id} {changed_fields}"
+            changed_fields = ", ".join(updates.keys())
+            return ToolResult.ok(f"Updated task #{task_id} {changed_fields}")
+        except Exception as e:
+            return ToolResult.error(str(e))
 
-    def task_list_handler() -> str:
-        kw = _task_kwargs()
-        all_tasks = list_tasks(kw.pop("project_slug"), **kw)
+    def task_list_handler(args: dict, context) -> ToolResult:
+        try:
+            kw = _task_kwargs(context)
+            all_tasks = list_tasks(kw.pop("project_slug"), **kw)
 
-        # Filter out _internal tasks for display
-        visible = [t for t in all_tasks if not t.metadata.get("_internal")]
+            # Filter out _internal tasks for display
+            visible = [t for t in all_tasks if not t.metadata.get("_internal")]
 
-        if not visible:
-            return "No tasks"
+            if not visible:
+                return ToolResult.ok("No tasks")
 
-        lines = []
-        for t in visible:
-            line = f"#{t.id} [{t.status.value}] {t.subject}"
-            # Check if blocked by any unresolved blockers
-            unresolved = []
-            for blocker_id in t.blockedBy:
-                blocker = next((x for x in all_tasks if x.id == blocker_id), None)
-                if blocker is not None and blocker.status.value != "completed":
-                    unresolved.append(blocker_id)
-            if unresolved:
-                line += f" [blocked by {', '.join(f'#{b}' for b in unresolved)}]"
-            lines.append(line)
+            lines = []
+            for t in visible:
+                line = f"#{t.id} [{t.status.value}] {t.subject}"
+                # Check if blocked by any unresolved blockers
+                unresolved = []
+                for blocker_id in t.blockedBy:
+                    blocker = next((x for x in all_tasks if x.id == blocker_id), None)
+                    if blocker is not None and blocker.status.value != "completed":
+                        unresolved.append(blocker_id)
+                if unresolved:
+                    line += f" [blocked by {', '.join(f'#{b}' for b in unresolved)}]"
+                lines.append(line)
 
-        return "\n".join(lines)
+            return ToolResult.ok("\n".join(lines))
+        except Exception as e:
+            return ToolResult.error(str(e))
 
-    def task_get_handler(task_id: str) -> str:
-        kw = _task_kwargs()
-        task = get_task(kw.pop("project_slug"), task_id, **kw)
-        if task is None:
-            return f"Task #{task_id} not found"
+    def task_get_handler(args: dict, context) -> ToolResult:
+        task_id = args.get("task_id", "")
+        try:
+            kw = _task_kwargs(context)
+            task = get_task(kw.pop("project_slug"), task_id, **kw)
+            if task is None:
+                return ToolResult.ok(f"Task #{task_id} not found")
 
-        lines = [
-            f"Task #{task.id}: {task.subject}",
-            f"Status: {task.status.value}",
-        ]
-        if task.activeForm:
-            lines.append(f"Active form: {task.activeForm}")
-        lines.append(f"Description: {task.description}")
-        if task.blockedBy:
-            lines.append(f"Blocked by: {', '.join(f'#{b}' for b in task.blockedBy)}")
-        if task.blocks:
-            lines.append(f"Blocks: {', '.join(f'#{b}' for b in task.blocks)}")
+            lines = [
+                f"Task #{task.id}: {task.subject}",
+                f"Status: {task.status.value}",
+            ]
+            if task.activeForm:
+                lines.append(f"Active form: {task.activeForm}")
+            lines.append(f"Description: {task.description}")
+            if task.blockedBy:
+                lines.append(f"Blocked by: {', '.join(f'#{b}' for b in task.blockedBy)}")
+            if task.blocks:
+                lines.append(f"Blocks: {', '.join(f'#{b}' for b in task.blocks)}")
 
-        return "\n".join(lines)
+            return ToolResult.ok("\n".join(lines))
+        except Exception as e:
+            return ToolResult.error(str(e))
 
     tools.register(
         name="task_create",

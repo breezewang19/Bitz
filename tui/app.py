@@ -98,7 +98,7 @@ class BitzApp(App):
         original = self._original_execute
         app = self
 
-        def logged_execute(name, args, confirmed=False, tool_id=None, agent=None, on_event=None):
+        def logged_execute(name, args, confirmed=False, tool_id=None):
             # spawn 工具特殊处理：显示 SubAgentCard + 实时日志
             if name == "spawn":
                 tasks = args.get("tasks", []) if isinstance(args, dict) else []
@@ -133,7 +133,17 @@ class BitzApp(App):
                     except Exception:
                         pass
 
-                result = original(name, args, confirmed=confirmed, tool_id=tool_id, agent=agent, on_event=on_event)
+                # Temporarily inject on_event into ExecutionContext for spawn
+                exec_ctx = original.__self__._exec_context if hasattr(original, '__self__') else None
+                old_on_event = None
+                if exec_ctx is not None:
+                    old_on_event = exec_ctx.on_event
+                    exec_ctx.on_event = on_event
+                try:
+                    result = original(name, args, confirmed=confirmed, tool_id=tool_id)
+                finally:
+                    if exec_ctx is not None:
+                        exec_ctx.on_event = old_on_event
                 app._subagent_cards.pop(card_key, None)
                 return result
 
@@ -158,8 +168,9 @@ class BitzApp(App):
                         except Exception:
                             pass
 
-                result = original(name, args, confirmed=confirmed, tool_id=tool_id, agent=agent, on_event=None)
-                is_error = result.startswith("Error") or result.startswith("[CONFIRM_REQUIRED]")
+                result = original(name, args, confirmed=confirmed, tool_id=tool_id)
+                from agent.tool_result import ToolResult
+                is_error = isinstance(result, ToolResult) and (not result.success or result.confirm_required)
 
                 # 生成 diff
                 diff_text = None

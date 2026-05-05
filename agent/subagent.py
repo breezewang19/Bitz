@@ -164,6 +164,15 @@ class SubAgent:
         # Set permission_mode for readonly enforcement
         self._agent.permission_mode = agent_def.permission_mode
 
+        # Set up ExecutionContext on sub-agent's tools (with on_event)
+        from agent.execution_context import ExecutionContext
+        exec_context = ExecutionContext(
+            session_id=self._context.session_id,
+            agent=self._agent,
+            on_event=self._on_event,
+        )
+        self._tools.set_exec_context(exec_context)
+
         # Token accumulation: wrap llm.chat to accumulate usage across all steps
         self._token_usage = 0
         original_chat = self._llm.chat
@@ -192,11 +201,11 @@ class SubAgent:
             original_execute = self._tools.execute
             idx = self._task_index
 
-            def logged_execute(name, args, confirmed=False, tool_id=None, agent=None, on_event=None):
+            def logged_execute(name, args, confirmed=False, tool_id=None):
                 args_summary = _format_args_summary(name, args if isinstance(args, dict) else {})
                 self._on_event("tool_start", idx, tool_name=name, args_summary=args_summary)
-                result = original_execute(name, args, confirmed=confirmed, tool_id=tool_id, agent=agent, on_event=on_event)
-                result_summary = (result or "")[:100]
+                result = original_execute(name, args, confirmed=confirmed, tool_id=tool_id)
+                result_summary = result.to_display()[:100] if hasattr(result, 'to_display') else str(result)[:100]
                 self._on_event("tool_end", idx, tool_name=name, result_summary=result_summary)
                 return result
 

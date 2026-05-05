@@ -7,7 +7,6 @@ from agent.context import Context
 from agent.adapter import LLMAdapter, LLMResponse, LLMError
 from agent.task_reminder import should_remind, get_task_summary, TASK_TOOL_NAMES
 from agent.tasks import get_project_slug
-import agent.builtin_tools
 
 
 class Agent:
@@ -27,6 +26,14 @@ class Agent:
         self._last_task_tool_step: int | None = None
         self._last_reminder_step: int | None = None
         self.permission_mode: str = "auto"  # "auto" | "readonly"
+
+        # Set up ExecutionContext on tools if not already set
+        from agent.execution_context import ExecutionContext
+        self._exec_context = ExecutionContext(
+            session_id=self.context.session_id,
+            agent=self,
+        )
+        self.tools.set_exec_context(self._exec_context)
 
     def run(self, user_input: str | None = None, cancel_event: threading.Event = None,
             confirmed_tools: set = None, skip_add_user: bool = False) -> str:
@@ -60,9 +67,6 @@ class Agent:
                 return response.content
 
             if response.stop_reason == "tool_use":
-                # Set session_id for task isolation
-                agent.builtin_tools._TASK_SESSION_ID = self.context.session_id
-
                 # 提取文字块（LLM 的中间思考/说明），输出到 UI
                 text_parts = []
                 tool_blocks = []
@@ -87,11 +91,11 @@ class Agent:
                     tool_id = tool_use["id"]
 
                     confirmed = tool_id in confirmed_tools
-                    result = self.tools.execute(tool_name, tool_args, confirmed=confirmed, tool_id=tool_id, agent=self, on_event=None)
+                    result = self.tools.execute(tool_name, tool_args, confirmed=confirmed, tool_id=tool_id)
 
-                    if result.startswith("[CONFIRM_REQUIRED]") and not confirmed:
+                    if result.confirm_required and not confirmed:
                         if self.auto_confirm:
-                            result = self.tools.execute(tool_name, tool_args, confirmed=True, tool_id=tool_id, on_event=None)
+                            result = self.tools.execute(tool_name, tool_args, confirmed=True, tool_id=tool_id)
                             confirmed_results.append((tool_id, tool_name, tool_args, result))
                         else:
                             pending_tools.append((tool_id, tool_name, tool_args, result))
@@ -106,10 +110,10 @@ class Agent:
                         tool_args = tu["input"]
                         tool_id = tu["id"]
                         confirmed = tool_id in confirmed_tools
-                        result = self.tools.execute(tool_name, tool_args, confirmed=confirmed, tool_id=tool_id, agent=self, on_event=None)
-                        needs_confirm = result.startswith("[CONFIRM_REQUIRED]") and not confirmed
+                        result = self.tools.execute(tool_name, tool_args, confirmed=confirmed, tool_id=tool_id)
+                        needs_confirm = result.confirm_required and not confirmed
                         if needs_confirm and self.auto_confirm:
-                            result = self.tools.execute(tool_name, tool_args, confirmed=True, tool_id=tool_id, on_event=None)
+                            result = self.tools.execute(tool_name, tool_args, confirmed=True, tool_id=tool_id)
                             needs_confirm = False
                         return tool_id, tool_name, tool_args, result, needs_confirm
 
@@ -130,11 +134,11 @@ class Agent:
                     self._pending_confirms = pending_tools
                     self._pending_response = response.content
                     self._confirmed_results = confirmed_results
-                    return pending_tools[0][3]  # return first confirm message
+                    return pending_tools[0][3].to_api_content()  # return first confirm message
 
                 self.context.add_assistant_message(response.content)
                 self.context.add_tool_results(
-                    [(tool_id, result) for tool_id, tool_name, tool_args, result in confirmed_results]
+                    [(tool_id, result.to_api_content()) for tool_id, tool_name, tool_args, result in confirmed_results]
                 )
                 # Task reminder: check for task tool usage and inject reminder
                 for tool_id, tool_name, tool_args, result in confirmed_results:
@@ -165,9 +169,6 @@ class Agent:
         """执行所有待确认的工具调用，将所有工具结果写入上下文，返回 (should_continue, result)"""
         if not self._pending_confirms:
             return (False, "No pending confirmation")
-
-        # Set session_id for task isolation
-        agent.builtin_tools._TASK_SESSION_ID = self.context.session_id
 
         # Save local copy before clearing
         pending = list(self._pending_confirms)
@@ -208,7 +209,7 @@ class Agent:
         self._confirmed_results = []
 
         self.context.add_tool_results(
-            [(tid, res) for tid, tname, targs, res in all_results]
+            [(tid, res.to_api_content() if hasattr(res, 'to_api_content') else str(res)) for tid, tname, targs, res in all_results]
         )
         # Task reminder: check for task tool usage in confirmed results
         for tool_id, tool_name, tool_args, result in all_results:
@@ -225,4 +226,4 @@ class Agent:
         if reminder:
             self.context.add_system_reminder(reminder)
             self._last_reminder_step = self._step_count
-        return (True, all_results[-1][3])
+        return (True, all_results[-1][3].to_api_content() if hasattr(all_results[-1][3], 'to_api_content') else str(all_results[-1][3]))

@@ -39,8 +39,8 @@ class TestSubAgentSpec:
     def test_defaults(self):
         spec = SubAgentSpec(task="review code")
         assert spec.task == "review code"
-        assert spec.context_hint == ""
-        assert spec.max_steps == 10
+        assert spec.context_hint is None
+        assert spec.max_steps is None
         assert spec.model is None
         assert spec.mode == "independent"
         assert spec.agent_type == "general-purpose"
@@ -95,6 +95,7 @@ class TestAgentAutoConfirm:
 
 def _make_parent_agent():
     """创建 mock 父 Agent，模拟真实结构"""
+    from agent.execution_context import ExecutionContext
     agent = MagicMock(spec=Agent)
     agent.llm_adapter = MagicMock(spec=LLMAdapter)
     agent.llm_adapter.api_key = "test-key"
@@ -104,6 +105,12 @@ def _make_parent_agent():
     agent.tools = ToolRegistry()
     agent.context = Context(system_prompt="You are a test assistant.")
     agent.context.add_user("parent message that should not leak")
+    # Set up ExecutionContext on parent tools
+    exec_context = ExecutionContext(
+        session_id=agent.context.session_id,
+        agent=agent,
+    )
+    agent.tools.set_exec_context(exec_context)
     return agent
 
 
@@ -151,7 +158,7 @@ class TestSubAgentConstruction:
         """general-purpose agent_def does not disallow spawn, but
         explore/plan agent_defs do. Test the filter_for_agent integration."""
         parent = _make_parent_agent()
-        parent.tools.register("spawn", "spawn sub agents", {"type": "object", "properties": {}}, handler=lambda: "")
+        parent.tools.register("spawn", "spawn sub agents", {"type": "object", "properties": {}}, handler=lambda args, context: ToolResult.ok(""))
         # general-purpose: spawn is NOT disallowed, but our BUILTIN_AGENTS
         # general-purpose has disallowed_tools=[], so spawn stays
         spec = SubAgentSpec(task="test", agent_type="general-purpose")
@@ -161,8 +168,8 @@ class TestSubAgentConstruction:
     def test_other_tools_preserved(self):
         """除 disallowed 外的工具都应保留"""
         parent = _make_parent_agent()
-        parent.tools.register("bash", "run command", {"type": "object", "properties": {}}, handler=lambda: "")
-        parent.tools.register("read_file", "read file", {"type": "object", "properties": {}}, handler=lambda: "")
+        parent.tools.register("bash", "run command", {"type": "object", "properties": {}}, handler=lambda args, context: ToolResult.ok(""))
+        parent.tools.register("read_file", "read file", {"type": "object", "properties": {}}, handler=lambda args, context: ToolResult.ok(""))
         spec = SubAgentSpec(task="test")
         sub = SubAgent(parent, spec)
         assert "bash" in sub._tools.tools
@@ -172,9 +179,9 @@ class TestSubAgentConstruction:
 class TestSubAgentWithAgentDefinition:
     def test_explore_agent_filters_tools(self):
         parent = _make_parent_agent()
-        parent.tools.register(name="write_file", description="write", input_schema={"type": "object", "properties": {}}, handler=lambda: "")
-        parent.tools.register(name="spawn", description="spawn", input_schema={"type": "object", "properties": {}}, handler=lambda: "")
-        parent.tools.register(name="bash", description="bash", input_schema={"type": "object", "properties": {}}, handler=lambda: "")
+        parent.tools.register(name="write_file", description="write", input_schema={"type": "object", "properties": {}}, handler=lambda args, context: ToolResult.ok(""))
+        parent.tools.register(name="spawn", description="spawn", input_schema={"type": "object", "properties": {}}, handler=lambda args, context: ToolResult.ok(""))
+        parent.tools.register(name="bash", description="bash", input_schema={"type": "object", "properties": {}}, handler=lambda args, context: ToolResult.ok(""))
         spec = SubAgentSpec(task="explore code", agent_type="explore")
         sub = SubAgent(parent, spec)
         assert "write_file" not in sub._tools.tools
@@ -184,8 +191,8 @@ class TestSubAgentWithAgentDefinition:
 
     def test_general_purpose_keeps_all_tools(self):
         parent = _make_parent_agent()
-        parent.tools.register(name="write_file", description="write", input_schema={"type": "object", "properties": {}}, handler=lambda: "")
-        parent.tools.register(name="spawn", description="spawn", input_schema={"type": "object", "properties": {}}, handler=lambda: "")
+        parent.tools.register(name="write_file", description="write", input_schema={"type": "object", "properties": {}}, handler=lambda args, context: ToolResult.ok(""))
+        parent.tools.register(name="spawn", description="spawn", input_schema={"type": "object", "properties": {}}, handler=lambda args, context: ToolResult.ok(""))
         spec = SubAgentSpec(task="do work")
         sub = SubAgent(parent, spec)
         assert "write_file" in sub._tools.tools
@@ -293,6 +300,7 @@ class TestSubAgentRun:
         mock_instance = MockAgentCls.return_value
         mock_instance.run.return_value = "task completed"
         mock_instance._step_count = 3
+        mock_instance._hit_step_limit = False
 
         spec = SubAgentSpec(task="do it")
         sub = SubAgent(parent, spec)
@@ -423,6 +431,8 @@ class TestRunParallel:
 
 
 from agent.builtin_tools import create_tools, SPAWN_TOOL_DEF
+from agent.tool_result import ToolResult
+from agent.execution_context import ExecutionContext
 
 
 class TestSpawnToolDefinition:
@@ -463,9 +473,14 @@ class TestSpawnExecution:
         MockSubAgentCls.return_value.run.return_value = mock_result
 
         parent = MagicMock()
-        result = tools.execute("spawn", {"task": "review code"}, agent=parent)
-        assert "完成" in result
-        assert "3 步" in result
+        parent.context = Context(system_prompt="test")
+        exec_ctx = ExecutionContext(session_id="test", agent=parent)
+        tools.set_exec_context(exec_ctx)
+        result = tools.execute("spawn", {"task": "review code"})
+        assert isinstance(result, ToolResult)
+        assert result.success
+        assert "完成" in result.data
+        assert "3 步" in result.data
 
     @patch("agent.subagent.SubAgent")
     def test_single_task_with_agent_type(self, MockSubAgentCls):
@@ -475,9 +490,14 @@ class TestSpawnExecution:
         MockSubAgentCls.return_value.run.return_value = mock_result
 
         parent = MagicMock()
-        result = tools.execute("spawn", {"task": "find files", "agent_type": "explore"}, agent=parent)
-        assert "explore" in result
-        assert "完成" in result
+        parent.context = Context(system_prompt="test")
+        exec_ctx = ExecutionContext(session_id="test", agent=parent)
+        tools.set_exec_context(exec_ctx)
+        result = tools.execute("spawn", {"task": "find files", "agent_type": "explore"})
+        assert isinstance(result, ToolResult)
+        assert result.success
+        assert "explore" in result.data
+        assert "完成" in result.data
 
     @patch("agent.subagent.run_parallel")
     def test_parallel_tasks(self, mock_parallel):
@@ -490,110 +510,129 @@ class TestSpawnExecution:
         mock_parallel.return_value = mock_results
 
         parent = MagicMock()
+        parent.context = Context(system_prompt="test")
+        exec_ctx = ExecutionContext(session_id="test", agent=parent)
+        tools.set_exec_context(exec_ctx)
         result = tools.execute(
             "spawn",
             {"tasks": ["task1", "task2"], "max_workers": 2},
-            agent=parent,
         )
-        assert "任务 1" in result
-        assert "任务 2" in result
+        assert isinstance(result, ToolResult)
+        assert result.success
+        assert "任务 1" in result.data
+        assert "任务 2" in result.data
 
     def test_spawn_without_agent(self):
         tools = create_tools()
         result = tools.execute("spawn", {"task": "test"})
-        assert "错误" in result
+        assert isinstance(result, ToolResult)
+        assert not result.success
+        assert "错误" in result.error_message
 
     def test_spawn_without_task_or_tasks(self):
         tools = create_tools()
         parent = MagicMock()
-        result = tools.execute("spawn", {}, agent=parent)
-        assert "错误" in result
+        parent.context = Context(system_prompt="test")
+        exec_ctx = ExecutionContext(session_id="test", agent=parent)
+        tools.set_exec_context(exec_ctx)
+        result = tools.execute("spawn", {})
+        assert isinstance(result, ToolResult)
+        assert not result.success
+        assert "错误" in result.error_message
 
 
 class TestReadonlyEnforcement:
     """Readonly permission mode enforcement in tool execution."""
 
-    def test_readonly_mode_blocks_write_bash(self):
+    def _make_tools_with_agent(self, agent):
+        """Create a ToolRegistry with ExecutionContext set to the given agent."""
         tools = ToolRegistry()
+        exec_ctx = ExecutionContext(session_id="test", agent=agent)
+        tools.set_exec_context(exec_ctx)
+        return tools
+
+    def test_readonly_mode_blocks_write_bash(self):
+        tools = self._make_tools_with_agent(MagicMock(permission_mode="readonly"))
         tools.register(
             name="bash",
             description="run bash",
             input_schema={"type": "object", "properties": {"command": {"type": "string"}}},
-            handler=lambda command: f"ran: {command}",
+            handler=lambda args, context: ToolResult.ok(f"ran: {args.get('command', '')}"),
             dangerous=True,
         )
-        agent = MagicMock()
-        agent.permission_mode = "readonly"
-        result = tools.execute("bash", {"command": "rm -rf /tmp/test"}, agent=agent)
-        assert "只读模式" in result
+        result = tools.execute("bash", {"command": "rm -rf /tmp/test"})
+        assert isinstance(result, ToolResult)
+        assert not result.success
+        assert "只读模式" in result.error_message
 
     def test_readonly_mode_allows_readonly_bash(self):
-        tools = ToolRegistry()
+        tools = self._make_tools_with_agent(MagicMock(permission_mode="readonly"))
         tools.register(
             name="bash",
             description="run bash",
             input_schema={"type": "object", "properties": {"command": {"type": "string"}}},
-            handler=lambda command: f"ran: {command}",
+            handler=lambda args, context: ToolResult.ok(f"ran: {args.get('command', '')}"),
             dangerous=True,
         )
-        agent = MagicMock()
-        agent.permission_mode = "readonly"
-        result = tools.execute("bash", {"command": "ls -la"}, agent=agent)
-        assert "ran: ls -la" in result
+        result = tools.execute("bash", {"command": "ls -la"})
+        assert isinstance(result, ToolResult)
+        assert result.success
+        assert "ran: ls -la" in result.data
 
     def test_readonly_mode_blocks_write_file(self):
-        tools = ToolRegistry()
+        tools = self._make_tools_with_agent(MagicMock(permission_mode="readonly"))
         tools.register(
             name="write_file",
             description="write file",
             input_schema={"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}},
-            handler=lambda path, content: "wrote",
+            handler=lambda args, context: ToolResult.ok("wrote"),
         )
-        agent = MagicMock()
-        agent.permission_mode = "readonly"
-        result = tools.execute("write_file", {"path": "/tmp/test", "content": "hello"}, agent=agent)
-        assert "只读模式" in result
+        result = tools.execute("write_file", {"path": "/tmp/test", "content": "hello"})
+        assert isinstance(result, ToolResult)
+        assert not result.success
+        assert "只读模式" in result.error_message
 
     def test_readonly_mode_blocks_edit_file(self):
-        tools = ToolRegistry()
+        tools = self._make_tools_with_agent(MagicMock(permission_mode="readonly"))
         tools.register(
             name="edit_file",
             description="edit file",
             input_schema={"type": "object", "properties": {"path": {"type": "string"}, "old_string": {"type": "string"}, "new_string": {"type": "string"}}},
-            handler=lambda path, old_string, new_string: "edited",
+            handler=lambda args, context: ToolResult.ok("edited"),
         )
-        agent = MagicMock()
-        agent.permission_mode = "readonly"
-        result = tools.execute("edit_file", {"path": "/tmp/test", "old_string": "old", "new_string": "new"}, agent=agent)
-        assert "只读模式" in result
+        result = tools.execute("edit_file", {"path": "/tmp/test", "old_string": "old", "new_string": "new"})
+        assert isinstance(result, ToolResult)
+        assert not result.success
+        assert "只读模式" in result.error_message
 
     def test_auto_mode_allows_write_bash(self):
-        tools = ToolRegistry()
+        tools = self._make_tools_with_agent(MagicMock(permission_mode="auto"))
         tools.register(
             name="bash",
             description="run bash",
             input_schema={"type": "object", "properties": {"command": {"type": "string"}}},
-            handler=lambda command: f"ran: {command}",
+            handler=lambda args, context: ToolResult.ok(f"ran: {args.get('command', '')}"),
             dangerous=True,
         )
-        agent = MagicMock()
-        agent.permission_mode = "auto"
-        result = tools.execute("bash", {"command": "echo hello"}, confirmed=True, agent=agent)
-        assert "ran: echo hello" in result
+        result = tools.execute("bash", {"command": "echo hello"}, confirmed=True)
+        assert isinstance(result, ToolResult)
+        assert result.success
+        assert "ran: echo hello" in result.data
 
     def test_no_permission_mode_allows_all(self):
         """Agent without permission_mode should not be blocked."""
-        tools = ToolRegistry()
+        tools = self._make_tools_with_agent(MagicMock(spec=[]))  # No permission_mode attribute
         tools.register(
             name="bash",
             description="run bash",
             input_schema={"type": "object", "properties": {"command": {"type": "string"}}},
-            handler=lambda command: f"ran: {command}",
+            handler=lambda args, context: ToolResult.ok(f"ran: {args.get('command', '')}"),
             dangerous=True,
         )
-        agent = MagicMock(spec=[])  # No permission_mode attribute
-        result = tools.execute("bash", {"command": "rm -rf /tmp/test"}, confirmed=True, agent=agent)
-        assert "ran: rm -rf /tmp/test" in result
+        result = tools.execute("bash", {"command": "rm -rf /tmp/test"}, confirmed=True)
+        assert isinstance(result, ToolResult)
+        assert result.success
+        assert "ran: rm -rf /tmp/test" in result.data
 
 
 class TestIsReadonlyCommand:
@@ -636,6 +675,7 @@ class TestOnEventCallback:
         mock_instance = MockAgentCls.return_value
         mock_instance.run.return_value = "ok"
         mock_instance._step_count = 2
+        mock_instance._hit_step_limit = False
 
         events = []
         def on_event(event_type, task_index, **kwargs):
@@ -698,7 +738,7 @@ class TestOnEventCallback:
     def test_tool_logging_injected(self):
         """on_event 设置后，工具执行应触发 tool_start/tool_end 事件"""
         parent = _make_parent_agent()
-        parent.tools.register("bash", "run command", {"type": "object", "properties": {}}, handler=lambda command: "output")
+        parent.tools.register("bash", "run command", {"type": "object", "properties": {}}, handler=lambda args, context: ToolResult.ok("output"))
 
         events = []
         def on_event(event_type, task_index, **kwargs):
@@ -764,7 +804,10 @@ class TestSpawnWithOnEvent:
             events.append((event_type, task_index, kwargs))
 
         parent = MagicMock()
-        result = tools.execute("spawn", {"task": "review code"}, agent=parent, on_event=on_event)
+        parent.context = Context(system_prompt="test")
+        exec_ctx = ExecutionContext(session_id="test", agent=parent, on_event=on_event)
+        tools.set_exec_context(exec_ctx)
+        result = tools.execute("spawn", {"task": "review code"})
 
         task_start_events = [e for e in events if e[0] == "task_start"]
         assert len(task_start_events) == 1
@@ -784,7 +827,10 @@ class TestSpawnWithOnEvent:
             events.append((event_type, task_index, kwargs))
 
         parent = MagicMock()
-        result = tools.execute("spawn", {"tasks": ["task1", "task2"]}, agent=parent, on_event=on_event)
+        parent.context = Context(system_prompt="test")
+        exec_ctx = ExecutionContext(session_id="test", agent=parent, on_event=on_event)
+        tools.set_exec_context(exec_ctx)
+        result = tools.execute("spawn", {"tasks": ["task1", "task2"]})
 
         task_start_events = [e for e in events if e[0] == "task_start"]
         assert len(task_start_events) == 2

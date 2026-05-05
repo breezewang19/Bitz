@@ -3,7 +3,11 @@
 import os
 import re
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agent.execution_context import ExecutionContext
+    from agent.tool_result import ToolResult
 
 
 @dataclass
@@ -52,6 +56,10 @@ class ToolRegistry:
 
     def __init__(self):
         self.tools: dict[str, Tool] = {}
+        self._exec_context: "ExecutionContext | None" = None
+
+    def set_exec_context(self, context: "ExecutionContext") -> None:
+        self._exec_context = context
 
     def register(self, name: str, description: str,
                  input_schema: dict, handler: Callable,
@@ -70,25 +78,29 @@ class ToolRegistry:
         )
 
     def execute(self, name: str, args: dict, confirmed: bool = False,
-                tool_id: str = None, agent=None, on_event=None) -> str:
-        """执行工具，返回结果字符串"""
+                tool_id: str = None) -> "ToolResult":
+        """执行工具，返回 ToolResult"""
+        from agent.tool_result import ToolResult
+
         # spawn 工具特殊处理
         if name == "spawn":
-            return self._execute_spawn(args, agent, on_event=on_event)
+            return self._execute_spawn(args)
 
         if name not in self.tools:
-            return f"Error: Unknown tool '{name}'"
+            return ToolResult.error(f"Unknown tool '{name}'")
 
         tool = self.tools[name]
 
         # Readonly permission mode enforcement
-        if hasattr(agent, 'permission_mode') and agent.permission_mode == "readonly":
-            if name == "bash" and "command" in args:
-                from agent.builtin_tools import bash_is_readonly
-                if not bash_is_readonly(args["command"]):
-                    return "错误：只读模式下不允许执行此命令"
-            elif name in ("write_file", "edit_file"):
-                return "错误：只读模式下不允许写入文件"
+        if self._exec_context and self._exec_context.agent:
+            agent = self._exec_context.agent
+            if hasattr(agent, 'permission_mode') and agent.permission_mode == "readonly":
+                if name == "bash" and "command" in args:
+                    from agent.builtin_tools import bash_is_readonly
+                    if not bash_is_readonly(args["command"]):
+                        return ToolResult.error("错误：只读模式下不允许执行此命令")
+                elif name in ("write_file", "edit_file"):
+                    return ToolResult.error("错误：只读模式下不允许写入文件")
 
         # 只读命令自动批准，不需要确认
         if tool.dangerous and tool.is_readonly:
@@ -104,27 +116,29 @@ class ToolRegistry:
             if tool.is_extra_dangerous:
                 try:
                     if name == "bash" and "command" in args and tool.is_extra_dangerous(args["command"]):
-                        return f"[CONFIRM_REQUIRED] {tool_id or ''} 危险命令: {args['command']}"
+                        return ToolResult.confirm(f"{tool_id or ''} 危险命令: {args['command']}")
                 except Exception:
                     pass
             # bash 危险命令检测
             if name == "bash" and "command" in args:
                 reason = check_dangerous_bash(args["command"])
                 if reason:
-                    return f"[CONFIRM_REQUIRED] {tool_id or ''} {reason}"
+                    return ToolResult.confirm(f"{tool_id or ''} {reason}")
             # 写文件覆盖检测
             if name == "write_file" and "path" in args:
                 if check_dangerous_write(args["path"]):
-                    return f"[CONFIRM_REQUIRED] {tool_id or ''} 覆盖已有文件"
+                    return ToolResult.confirm(f"{tool_id or ''} 覆盖已有文件")
             # edit_file 需要确认
             if name == "edit_file":
-                return f"[CONFIRM_REQUIRED] {tool_id or ''} 修改文件内容"
+                return ToolResult.confirm(f"{tool_id or ''} 修改文件内容")
 
         try:
-            result = tool.handler(**args)
-            return str(result)
+            result = tool.handler(args, self._exec_context)
+            if isinstance(result, ToolResult):
+                return result
+            return ToolResult.ok(str(result))
         except Exception as e:
-            return f"Error executing {name}: {e}"
+            return ToolResult.error(f"Error executing {name}: {e}")
 
     def filter_for_agent(self, agent_def: "AgentDefinition") -> "ToolRegistry":
         """Return a new registry with tools filtered by agent definition's disallowed_tools."""
@@ -142,6 +156,7 @@ class ToolRegistry:
                     is_readonly=tool.is_readonly,
                     is_extra_dangerous=tool.is_extra_dangerous,
                 )
+        filtered._exec_context = self._exec_context
         return filtered
 
     def list_for_llm(self) -> list[dict]:
@@ -155,12 +170,16 @@ class ToolRegistry:
             for t in self.tools.values()
         ]
 
-    def _execute_spawn(self, args: dict, agent=None, on_event=None) -> str:
+    def _execute_spawn(self, args: dict) -> "ToolResult":
         """执行 spawn 工具"""
         from agent.subagent import SubAgent, SubAgentSpec, run_parallel
+        from agent.tool_result import ToolResult
 
-        if agent is None:
-            return "错误：spawn 需要主 Agent 引用"
+        if self._exec_context is None or self._exec_context.agent is None:
+            return ToolResult.error("错误：spawn 需要主 Agent 引用")
+
+        agent = self._exec_context.agent
+        on_event = self._exec_context.on_event if self._exec_context else None
 
         task = args.get("task")
         tasks = args.get("tasks", [])
@@ -171,7 +190,7 @@ class ToolRegistry:
         mode = args.get("mode", "independent")
 
         if not task and not tasks:
-            return "错误：必须提供 task 或 tasks 参数"
+            return ToolResult.error("错误：必须提供 task 或 tasks 参数")
 
         # Build fork messages if mode is fork
         fork_messages = None
@@ -189,7 +208,7 @@ class ToolRegistry:
                         assistant_msg = msg
                         break
                 if assistant_msg is None:
-                    return "错误：fork 模式需要父 Agent 的 assistant 消息"
+                    return ToolResult.error("错误：fork 模式需要父 Agent 的 assistant 消息")
 
                 # Build directives from task or tasks
                 directives = [task] if task else tasks
@@ -199,7 +218,7 @@ class ToolRegistry:
                 if task:
                     fork_messages = fork_message_lists[0] if fork_message_lists else None
             else:
-                return "错误：fork 模式需要父 Agent 上下文"
+                return ToolResult.error("错误：fork 模式需要父 Agent 上下文")
 
         # 单任务
         if task:
@@ -216,10 +235,10 @@ class ToolRegistry:
             result = sub.run()
             if result.success:
                 token_info = f", {result.tokens} tokens" if result.tokens else ""
-                return f"子 Agent [{agent_type}] 完成（{result.steps} 步，{result.elapsed:.1f}s{token_info}）:\n{result.output}"
+                return ToolResult.ok(f"子 Agent [{agent_type}] 完成（{result.steps} 步，{result.elapsed:.1f}s{token_info}）:\n{result.output}")
             else:
                 partial = f"\n部分输出:\n{result.output}" if result.output and not result.output.startswith("Error") else ""
-                return f"子 Agent [{agent_type}] 未完成: {result.error}{partial}"
+                return ToolResult.ok(f"子 Agent [{agent_type}] 未完成: {result.error}{partial}")
 
         # 并发多任务
         specs = [
@@ -254,4 +273,4 @@ class ToolRegistry:
                 status = f"✗ 未完成: {r.error}"
             output_parts.append(f"### 任务 {i + 1}: {specs[i].task[:50]}\n{status}\n{r.output}")
 
-        return "\n\n---\n\n".join(output_parts)
+        return ToolResult.ok("\n\n---\n\n".join(output_parts))

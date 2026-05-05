@@ -1,13 +1,15 @@
 # tests/test_tools.py
 import pytest
 from agent.tools import Tool, ToolRegistry
+from agent.tool_result import ToolResult
+from agent.execution_context import ExecutionContext
 
 
 def test_tool_registry_register():
     registry = ToolRegistry()
 
-    def dummy_handler(x: str) -> str:
-        return f"got: {x}"
+    def dummy_handler(args: dict, context) -> ToolResult:
+        return ToolResult.ok(f"got: {args.get('x', '')}")
 
     registry.register(
         name="echo",
@@ -30,26 +32,29 @@ def test_tool_registry_execute():
         name="echo",
         description="Echo back",
         input_schema={"type": "object", "properties": {"x": {"type": "string"}}},
-        handler=lambda x: f"got: {x}"
+        handler=lambda args, context: ToolResult.ok(f"got: {args.get('x', '')}")
     )
 
     result = registry.execute("echo", {"x": "hello"})
-    assert result == "got: hello"
+    assert isinstance(result, ToolResult)
+    assert result.success
+    assert result.data == "got: hello"
 
 
 def test_tool_registry_execute_error():
     """测试调用不存在的工具"""
     registry = ToolRegistry()
     result = registry.execute("nonexistent", {})
-    assert "Error" in result
-    assert "Unknown tool" in result
+    assert isinstance(result, ToolResult)
+    assert not result.success
+    assert "Unknown tool" in result.error_message
 
 
 def test_tool_registry_execute_handler_error():
     """测试工具执行出错"""
     registry = ToolRegistry()
 
-    def bad_handler(x: str) -> str:
+    def bad_handler(args: dict, context) -> ToolResult:
         raise ValueError("test error")
 
     registry.register(
@@ -60,8 +65,9 @@ def test_tool_registry_execute_handler_error():
     )
 
     result = registry.execute("bad", {"x": "test"})
-    assert "Error" in result
-    assert "test error" in result
+    assert isinstance(result, ToolResult)
+    assert not result.success
+    assert "test error" in result.error_message
 
 
 def test_tool_registry_list_for_llm():
@@ -70,7 +76,7 @@ def test_tool_registry_list_for_llm():
         name="echo",
         description="Echo back",
         input_schema={"type": "object", "properties": {"x": {"type": "string"}}},
-        handler=lambda x: x
+        handler=lambda args, context: ToolResult.ok(args.get("x", ""))
     )
 
     tools = registry.list_for_llm()
