@@ -5,6 +5,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from agent.context import Context
 from agent.adapter import LLMAdapter, LLMResponse, LLMError
+from agent.task_reminder import should_remind, get_task_summary, TASK_TOOL_NAMES
+from agent.tasks import get_project_slug
 
 
 class Agent:
@@ -21,6 +23,8 @@ class Agent:
         self.auto_confirm: bool = False  # 子 agent 自动确认
         self._step_count: int = 0  # 已执行步数
         self._hit_step_limit: bool = False  # 是否因步数限制退出
+        self._last_task_tool_step: int | None = None
+        self._last_reminder_step: int | None = None
         self.permission_mode: str = "auto"  # "auto" | "readonly"
 
     def run(self, user_input: str | None = None, cancel_event: threading.Event = None,
@@ -128,6 +132,21 @@ class Agent:
                 self.context.add_tool_results(
                     [(tool_id, result) for tool_id, tool_name, tool_args, result in confirmed_results]
                 )
+                # Task reminder: check for task tool usage and inject reminder
+                for tool_id, tool_name, tool_args, result in confirmed_results:
+                    if tool_name in TASK_TOOL_NAMES:
+                        self._last_task_tool_step = self._step_count
+                        break
+                summary = get_task_summary(get_project_slug())
+                reminder = should_remind(
+                    step_count=self._step_count,
+                    last_task_tool_step=self._last_task_tool_step,
+                    last_reminder_step=self._last_reminder_step,
+                    task_summary=summary,
+                )
+                if reminder:
+                    self.context.add_system_reminder(reminder)
+                    self._last_reminder_step = self._step_count
                 continue
 
             if response.stop_reason == "max_tokens":
@@ -184,4 +203,19 @@ class Agent:
         self.context.add_tool_results(
             [(tid, res) for tid, tname, targs, res in all_results]
         )
+        # Task reminder: check for task tool usage in confirmed results
+        for tool_id, tool_name, tool_args, result in all_results:
+            if tool_name in TASK_TOOL_NAMES:
+                self._last_task_tool_step = self._step_count
+                break
+        summary = get_task_summary(get_project_slug())
+        reminder = should_remind(
+            step_count=self._step_count,
+            last_task_tool_step=self._last_task_tool_step,
+            last_reminder_step=self._last_reminder_step,
+            task_summary=summary,
+        )
+        if reminder:
+            self.context.add_system_reminder(reminder)
+            self._last_reminder_step = self._step_count
         return (True, all_results[-1][3])

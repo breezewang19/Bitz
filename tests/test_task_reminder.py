@@ -157,3 +157,27 @@ class TestConstants:
     def test_threshold_values(self):
         assert REMINDER_THRESHOLD == 10
         assert REMINDER_COOLDOWN == 10
+
+
+class TestReminderIntegration:
+    """Tests for how should_remind would be called from the loop."""
+
+    def test_step_count_resets_after_task_tool_use(self):
+        """After using a task tool, the threshold counter resets."""
+        # Step 5: task tool used
+        last_task_tool_step = 5
+        # Step 14: threshold met (14 - 5 = 9, not yet)
+        result = should_remind(14, last_task_tool_step, None, None)
+        assert result is None
+        # Step 15: threshold met (15 - 5 = 10)
+        result = should_remind(15, last_task_tool_step, None, None)
+        assert result is not None
+
+    def test_reminder_not_injected_when_task_tool_recently_used(self):
+        """If task tool was used recently, no reminder even at high step count."""
+        result = should_remind(100, 95, None, None)
+        assert result is None
+
+    def test_all_four_task_tools_count(self):
+        """All 4 task tools should be in TASK_TOOL_NAMES."""
+        assert TASK_TOOL_NAMES == {"task_create", "task_update", "task_list", "task_get"}
