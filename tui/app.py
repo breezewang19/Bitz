@@ -21,6 +21,7 @@ from tui.widgets.model_select import ModelSelectScreen
 from tui.widgets.model_add import ModelAddScreen
 from tui.widgets.model_confirm import ModelConfirmScreen
 from tui.widgets.task_list import TaskListWidget
+from agent.tasks import get_project_slug
 from agent.skills import SkillRegistry
 
 if TYPE_CHECKING:
@@ -56,7 +57,7 @@ class BitzApp(App):
         self._total_output_tokens: int = 0
 
     def compose(self) -> ComposeResult:
-        yield TaskListWidget(id="task-list")
+        yield TaskListWidget(id="task-list", project_slug=get_project_slug())
         yield ChatLog()
         yield ThinkingIndicator()
         yield StatusBar()
