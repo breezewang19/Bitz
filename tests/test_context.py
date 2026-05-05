@@ -40,17 +40,18 @@ def test_context_add_tool_result():
 
 
 def test_context_trim():
-    """测试消息修剪"""
+    """测试消息修剪 — 首条 user 消息受保护"""
     ctx = Context(system_prompt="You are helpful.", keep_last_n=3)
     ctx.add_user("Message 1")
     ctx.add_user("Message 2")
     ctx.add_user("Message 3")
     ctx.add_user("Message 4")
-    assert len(ctx.messages) == 3
-    # The first message should have been trimmed
-    assert ctx.messages[0]["content"] == "Message 2"
-    assert ctx.messages[1]["content"] == "Message 3"
-    assert ctx.messages[2]["content"] == "Message 4"
+    # First user message is protected, so total is last 3 + protected first = 4
+    assert len(ctx.messages) == 4
+    assert ctx.messages[0]["content"] == "Message 1"
+    assert ctx.messages[1]["content"] == "Message 2"
+    assert ctx.messages[2]["content"] == "Message 3"
+    assert ctx.messages[3]["content"] == "Message 4"
 
 
 def test_context_get_messages():
@@ -69,17 +70,18 @@ def test_context_get_messages():
 
 
 def test_context_get_messages_trimmed():
-    """测试 get_messages 返回修剪后的消息"""
+    """测试 get_messages 返回修剪后的消息 — 首条 user 消息受保护"""
     ctx = Context(system_prompt="You are helpful.", keep_last_n=2)
     ctx.add_user("Message 1")
     ctx.add_user("Message 2")
     ctx.add_user("Message 3")
     msgs = ctx.get_messages()
-    # Should include system prompt + last 2 messages
-    assert len(msgs) == 3  # system + 2 trimmed
+    # First user message is protected, so total is system + protected + last 2 = 4
+    assert len(msgs) == 4  # system + Message 1 (protected) + Message 2 + Message 3
     assert msgs[0]["role"] == "system"
-    assert msgs[1]["content"] == "Message 2"
-    assert msgs[2]["content"] == "Message 3"
+    assert msgs[1]["content"] == "Message 1"
+    assert msgs[2]["content"] == "Message 2"
+    assert msgs[3]["content"] == "Message 3"
 
 
 class FakeSessionStore:
@@ -174,15 +176,16 @@ def test_context_get_messages_strips_meta():
 
 
 def test_context_add_system_reminder_trims():
-    """add_system_reminder calls _trim like other add methods."""
+    """add_system_reminder calls _trim like other add methods — first user protected."""
     ctx = Context(system_prompt="test", keep_last_n=2)
     ctx.add_user("Message 1")
     ctx.add_user("Message 2")
     ctx.add_system_reminder("Reminder")
-    # After trim, only last 2 messages kept
-    assert len(ctx.messages) == 2
-    assert ctx.messages[0]["content"] == "Message 2"
-    assert ctx.messages[1]["content"] == "Reminder"
+    # After trim, first user message is protected, so total is last 2 + protected first = 3
+    assert len(ctx.messages) == 3
+    assert ctx.messages[0]["content"] == "Message 1"
+    assert ctx.messages[1]["content"] == "Message 2"
+    assert ctx.messages[2]["content"] == "Reminder"
 
 
 def test_context_add_system_reminder_no_persist():
@@ -194,3 +197,75 @@ def test_context_add_system_reminder_no_persist():
     # Only the user message should be persisted, not the reminder
     assert len(store.entries) == 1
     assert store.entries[0]["content"] == "hello"
+
+
+def test_trim_preserves_first_user_message():
+    """After trimming, the initial user message should be preserved"""
+    ctx = Context(system_prompt="sys", keep_last_n=5)
+    ctx.add_user("这是初始请求")
+    for i in range(10):
+        ctx.add_assistant_text(f"回复 {i}")
+        ctx.add_user(f"追问 {i}")
+    user_msgs = [m for m in ctx.messages if m.get("role") == "user" and isinstance(m.get("content"), str)]
+    assert any("初始请求" in m["content"] for m in user_msgs)
+
+
+def test_ensure_pair_integrity_removes_orphan_tool_use():
+    """Orphaned tool_use (no corresponding tool_result) should be removed"""
+    ctx = Context(system_prompt="sys", keep_last_n=100)
+    ctx.add_user("do something")
+    ctx.messages.append({
+        "role": "assistant",
+        "content": [{"type": "tool_use", "id": "tu-1", "name": "bash", "input": {"command": "ls"}}]
+    })
+    ctx.add_user("next message")
+    ctx._ensure_pair_integrity()
+    for msg in ctx.messages:
+        content = msg.get("content", [])
+        if isinstance(content, list):
+            for block in content:
+                assert block.get("type") != "tool_use" or block.get("id") != "tu-1"
+
+
+def test_ensure_pair_integrity_removes_orphan_tool_result():
+    """Orphaned tool_result (no corresponding tool_use) should be removed"""
+    ctx = Context(system_prompt="sys", keep_last_n=100)
+    ctx.add_user("do something")
+    ctx.messages.append({
+        "role": "user",
+        "content": [{"type": "tool_result", "tool_use_id": "tu-orphan", "content": "output"}]
+    })
+    ctx.add_user("next message")
+    ctx._ensure_pair_integrity()
+    for msg in ctx.messages:
+        content = msg.get("content", [])
+        if isinstance(content, list):
+            for block in content:
+                assert block.get("type") != "tool_result" or block.get("tool_use_id") != "tu-orphan"
+
+
+def test_ensure_pair_integrity_keeps_paired():
+    """Paired tool_use/tool_result should be preserved"""
+    ctx = Context(system_prompt="sys", keep_last_n=100)
+    ctx.add_user("do something")
+    ctx.messages.append({
+        "role": "assistant",
+        "content": [{"type": "tool_use", "id": "tu-1", "name": "bash", "input": {"command": "ls"}}]
+    })
+    ctx.messages.append({
+        "role": "user",
+        "content": [{"type": "tool_result", "tool_use_id": "tu-1", "content": "file1.txt\nfile2.txt"}]
+    })
+    ctx.add_user("next")
+    ctx._ensure_pair_integrity()
+    has_tool_use = any(
+        b.get("type") == "tool_use" and b.get("id") == "tu-1"
+        for m in ctx.messages for b in m.get("content", []) if isinstance(m.get("content"), list)
+    )
+    assert has_tool_use
+
+
+def test_default_keep_last_n_is_30():
+    """Default keep_last_n should be 30"""
+    ctx = Context(system_prompt="sys")
+    assert ctx.keep_last_n == 30

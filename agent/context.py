@@ -9,7 +9,7 @@ from uuid import uuid4
 class Context:
     """会话上下文"""
 
-    def __init__(self, system_prompt: str = "", max_tokens: int = 16384, keep_last_n: int = 10,
+    def __init__(self, system_prompt: str = "", max_tokens: int = 16384, keep_last_n: int = 30,
                  session_id: str | None = None, session_store=None):
         self.system_prompt = system_prompt
         self.messages: list[dict] = []
@@ -87,21 +87,80 @@ class Context:
         return self._active_skill
 
     def _trim(self) -> None:
-        """保持消息数量不超过 keep_last_n，保证 tool_use/tool_result 配对完整"""
+        """保持消息数量不超过 keep_last_n，保护首条 user 消息，保证 tool_use/tool_result 配对完整"""
         if len(self.messages) <= self.keep_last_n:
             return
-        self.messages = self.messages[-self.keep_last_n:]
-        while self.messages:
-            first = self.messages[0]
-            if first["role"] == "user" and isinstance(first.get("content"), list):
-                has_tool_result = any(
-                    isinstance(b, dict) and b.get("type") == "tool_result"
-                    for b in first["content"]
-                )
-                if has_tool_result:
-                    self.messages.pop(0)
-                    continue
-            break
+
+        # Protect the first user message (initial request)
+        protected_indices: set[int] = set()
+        for i, msg in enumerate(self.messages):
+            if msg.get("role") == "user" and isinstance(msg.get("content"), str):
+                protected_indices.add(i)
+                break
+
+        # Keep the last keep_last_n messages from the tail
+        tail_start = len(self.messages) - self.keep_last_n
+        tail_indices = set(range(tail_start, len(self.messages)))
+
+        # Combine protected and tail, then rebuild from sorted retained indices
+        retained = sorted(protected_indices | tail_indices)
+        self.messages = [self.messages[i] for i in retained]
+
+        self._ensure_pair_integrity()
+
+    def _ensure_pair_integrity(self) -> None:
+        """确保 tool_use 和 tool_result 配对完整，移除孤立块"""
+        # Collect all tool_use IDs and tool_result IDs
+        tool_use_ids: set[str] = set()
+        tool_result_ids: set[str] = set()
+        for msg in self.messages:
+            content = msg.get("content", [])
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict):
+                        if block.get("type") == "tool_use":
+                            tool_use_ids.add(block.get("id"))
+                        elif block.get("type") == "tool_result":
+                            tool_result_ids.add(block.get("tool_use_id"))
+
+        # Paired IDs are those that appear on both sides
+        paired_ids = tool_use_ids & tool_result_ids
+
+        # Rebuild messages, removing unpaired tool blocks
+        new_messages: list[dict] = []
+        for msg in self.messages:
+            content = msg.get("content", [])
+            if isinstance(content, str):
+                new_messages.append(msg)
+                continue
+
+            if not isinstance(content, list):
+                new_messages.append(msg)
+                continue
+
+            # Filter out unpaired tool blocks
+            filtered_blocks: list[dict] = []
+            has_unpaired = False
+            for block in content:
+                if isinstance(block, dict):
+                    if block.get("type") == "tool_use" and block.get("id") not in paired_ids:
+                        has_unpaired = True
+                        continue
+                    if block.get("type") == "tool_result" and block.get("tool_use_id") not in paired_ids:
+                        has_unpaired = True
+                        continue
+                filtered_blocks.append(block)
+
+            if not filtered_blocks:
+                # Message became empty after removing unpaired blocks — skip it
+                continue
+
+            if has_unpaired:
+                new_messages.append({**msg, "content": filtered_blocks})
+            else:
+                new_messages.append(msg)
+
+        self.messages = new_messages
 
     def _persist(self, msg: dict) -> None:
         """持久化消息到 JSONL（当 session_store 存在时）"""
