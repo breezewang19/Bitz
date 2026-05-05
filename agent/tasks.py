@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import time
+import fcntl
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from pathlib import Path
@@ -13,6 +14,26 @@ from typing import Any
 from agent.session import sanitize_path
 
 log = logging.getLogger(__name__)
+
+
+class _TaskDirLock:
+    """File-based lock for a task directory to prevent concurrent ID conflicts."""
+
+    def __init__(self, tasks_dir: Path):
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        self._lock_path = tasks_dir / ".lock"
+        self._fd: int | None = None
+
+    def __enter__(self):
+        self._fd = os.open(str(self._lock_path), os.O_CREAT | os.O_RDWR)
+        fcntl.flock(self._fd, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc):
+        if self._fd is not None:
+            fcntl.flock(self._fd, fcntl.LOCK_UN)
+            os.close(self._fd)
+            self._fd = None
 
 
 # ---------------------------------------------------------------------------
@@ -144,24 +165,25 @@ def create_task(
     tasks_dir = _get_tasks_dir(project_slug, session_id, base_dir)
     _ensure_dir(tasks_dir)
 
-    next_id = _next_id(tasks_dir)
-    task = Task(
-        id=str(next_id),
-        subject=subject,
-        description=description,
-        activeForm=active_form,
-        metadata=metadata if metadata is not None else {},
-    )
+    with _TaskDirLock(tasks_dir):
+        next_id = _next_id(tasks_dir)
+        task = Task(
+            id=str(next_id),
+            subject=subject,
+            description=description,
+            activeForm=active_form,
+            metadata=metadata if metadata is not None else {},
+        )
 
-    # Write JSON file
-    task_path = tasks_dir / f"{task.id}.json"
-    task_path.write_text(
-        json.dumps(task.to_dict(), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+        # Write JSON file
+        task_path = tasks_dir / f"{task.id}.json"
+        task_path.write_text(
+            json.dumps(task.to_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
-    # Update high-water mark
-    _write_highwatermark(tasks_dir, next_id)
+        # Update high-water mark
+        _write_highwatermark(tasks_dir, next_id)
 
     return task
 

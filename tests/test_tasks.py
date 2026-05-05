@@ -681,3 +681,38 @@ class TestSessionIsolation:
         assert t1.id == "1"
         assert t2.id == "2"
         assert t3.id == "1"  # Independent ID sequence per session
+
+
+class TestConcurrentCreate:
+    """Concurrent task_create calls must not produce duplicate IDs."""
+
+    def test_concurrent_create_no_duplicate_ids(self, slug, base_dir):
+        from concurrent.futures import ThreadPoolExecutor
+
+        n = 20
+
+        def _create(i):
+            return create_task(slug, f"Task {i}", f"Description {i}", base_dir=base_dir)
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            tasks = list(pool.map(_create, range(n)))
+
+        ids = [t.id for t in tasks]
+        assert len(set(ids)) == n, f"Duplicate IDs found: {ids}"
+
+    def test_concurrent_create_per_session_no_duplicate_ids(self, slug, base_dir):
+        from concurrent.futures import ThreadPoolExecutor
+
+        n = 10
+
+        def _create(i):
+            return create_task(
+                slug, f"Task {i}", f"Desc {i}",
+                session_id="sess-concurrent", base_dir=base_dir,
+            )
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            tasks = list(pool.map(_create, range(n)))
+
+        ids = [t.id for t in tasks]
+        assert len(set(ids)) == n, f"Duplicate IDs found: {ids}"
