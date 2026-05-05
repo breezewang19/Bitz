@@ -39,6 +39,7 @@ class TaskListWidget(Static):
         self.base_dir = base_dir
         self._hide_timer = None
         self._has_content = False
+        self._collapsed = False
 
     @property
     def has_content(self) -> bool:
@@ -66,6 +67,11 @@ class TaskListWidget(Static):
 
         # Check if all tasks are completed
         all_completed = all(t.status == TaskStatus.COMPLETED for t in tasks)
+
+        if all_completed and self._collapsed:
+            # Already collapsed after all-completed, don't re-render
+            return
+
         if all_completed:
             # Render once with completed tasks, then start hide timer
             now = time.time()
@@ -75,10 +81,11 @@ class TaskListWidget(Static):
                 self._hide_timer = self.set_timer(self.HIDE_DELAY, self._collapse)
             return
 
-        # Cancel any pending hide timer if there are active tasks
+        # Active tasks exist — cancel any pending hide and reset collapsed state
         if self._hide_timer is not None:
             self._hide_timer.stop()
             self._hide_timer = None
+        self._collapsed = False
 
         now = time.time()
         limited = self._sort_and_limit(tasks, now)
@@ -86,12 +93,14 @@ class TaskListWidget(Static):
 
     def _clear(self) -> None:
         """Clear the widget content."""
+        self._collapsed = False
         self._has_content = False
         self.update("")
 
     def _collapse(self) -> None:
         """Hide the widget (called by timer after all tasks completed)."""
         self._hide_timer = None
+        self._collapsed = True
         self._has_content = False
         self.update("")
 
