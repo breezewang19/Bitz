@@ -51,14 +51,14 @@ def should_remind(
     return _NUDGE
 
 
-def get_task_summary(project_slug: str, base_dir=None) -> str | None:
+def get_task_summary(project_slug: str, session_id: str | None = None, base_dir=None) -> str | None:
     """Return a formatted task list string for active tasks, or None.
 
     Filtering mirrors task_list_handler in builtin_tools.py:
     exclude _internal tasks, show only pending/in_progress.
     """
     from agent.tasks import list_tasks
-    all_tasks = list_tasks(project_slug, base_dir=base_dir)
+    all_tasks = list_tasks(project_slug, session_id=session_id, base_dir=base_dir)
     active = [t for t in all_tasks
               if t.status.value in ("pending", "in_progress")
               and not t.metadata.get("_internal")]

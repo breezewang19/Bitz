@@ -29,11 +29,13 @@ class TaskListWidget(Static):
     def __init__(
         self,
         project_slug: str | None = None,
+        session_id: str | None = None,
         base_dir: Path | None = None,
         **kwargs,
     ) -> None:
         super().__init__("", **kwargs)
         self.project_slug = project_slug
+        self.session_id = session_id
         self.base_dir = base_dir
         self._hide_timer = None
         self._has_content = False
@@ -54,7 +56,7 @@ class TaskListWidget(Static):
             return
 
         try:
-            tasks = list_tasks(self.project_slug, base_dir=self.base_dir)
+            tasks = list_tasks(self.project_slug, session_id=self.session_id, base_dir=self.base_dir)
         except Exception:
             tasks = []
 

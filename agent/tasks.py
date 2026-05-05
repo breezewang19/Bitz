@@ -65,13 +65,16 @@ def get_project_slug() -> str:
     return sanitize_path(os.getcwd())
 
 
-def _get_tasks_dir(project_slug: str, base_dir: Path | None = None) -> Path:
-    """Return the tasks directory for a project slug.
+def _get_tasks_dir(project_slug: str, session_id: str | None = None, base_dir: Path | None = None) -> Path:
+    """Return the tasks directory for a project slug and optional session.
 
-    Default: ``~/.bitz/tasks/<slug>/``.
+    Default: ``~/.bitz/tasks/<slug>/<session_id>/`` (or ``~/.bitz/tasks/<slug>/`` if no session).
     """
     root = base_dir or (Path.home() / ".bitz" / "tasks")
-    return root / project_slug
+    path = root / project_slug
+    if session_id:
+        path = path / session_id
+    return path
 
 
 def _ensure_dir(path: Path) -> None:
@@ -131,13 +134,14 @@ def create_task(
     active_form: str | None = None,
     metadata: dict[str, Any] | None = None,
     *,
+    session_id: str | None = None,
     base_dir: Path | None = None,
 ) -> Task:
     """Create a new task and persist it to disk.
 
     Returns the created :class:`Task`.
     """
-    tasks_dir = _get_tasks_dir(project_slug, base_dir)
+    tasks_dir = _get_tasks_dir(project_slug, session_id, base_dir)
     _ensure_dir(tasks_dir)
 
     next_id = _next_id(tasks_dir)
@@ -166,10 +170,11 @@ def get_task(
     project_slug: str,
     task_id: str,
     *,
+    session_id: str | None = None,
     base_dir: Path | None = None,
 ) -> Task | None:
     """Read a single task by ID.  Returns ``None`` if not found or corrupt."""
-    tasks_dir = _get_tasks_dir(project_slug, base_dir)
+    tasks_dir = _get_tasks_dir(project_slug, session_id, base_dir)
     task_path = tasks_dir / f"{task_id}.json"
     if not task_path.exists():
         return None
@@ -184,13 +189,14 @@ def get_task(
 def list_tasks(
     project_slug: str,
     *,
+    session_id: str | None = None,
     base_dir: Path | None = None,
 ) -> list[Task]:
     """List all tasks (including ``_internal`` ones).
 
     Filtering of ``_internal`` tasks is a tool-layer concern.
     """
-    tasks_dir = _get_tasks_dir(project_slug, base_dir)
+    tasks_dir = _get_tasks_dir(project_slug, session_id, base_dir)
     if not tasks_dir.exists():
         return []
     tasks: list[Task] = []
@@ -231,6 +237,7 @@ def block_task(
     blocker_id: str,
     blocked_id: str,
     *,
+    session_id: str | None = None,
     base_dir: Path | None = None,
 ) -> bool:
     """Create a bidirectional dependency between two tasks.
@@ -242,18 +249,18 @@ def block_task(
     doesn't exist.  Returns ``True`` on success.
     """
     # Load both tasks
-    blocker = get_task(project_slug, blocker_id, base_dir=base_dir)
-    blocked = get_task(project_slug, blocked_id, base_dir=base_dir)
+    blocker = get_task(project_slug, blocker_id, session_id=session_id, base_dir=base_dir)
+    blocked = get_task(project_slug, blocked_id, session_id=session_id, base_dir=base_dir)
     if blocker is None or blocked is None:
         return False
 
     # Check for circular dependency: would adding blocker->blocked create a
     # path from blocked back to blocker?
-    all_tasks = list_tasks(project_slug, base_dir=base_dir)
+    all_tasks = list_tasks(project_slug, session_id=session_id, base_dir=base_dir)
     if has_cycle(all_tasks, start_id=blocked_id, target_id=blocker_id):
         return False
 
-    tasks_dir = _get_tasks_dir(project_slug, base_dir)
+    tasks_dir = _get_tasks_dir(project_slug, session_id, base_dir)
 
     # Apply bidirectional links
     if blocked_id not in blocker.blocks:
@@ -281,6 +288,7 @@ def update_task(
     project_slug: str,
     task_id: str,
     *,
+    session_id: str | None = None,
     base_dir: Path | None = None,
     **updates: Any,
 ) -> Task | None:
@@ -291,15 +299,15 @@ def update_task(
     - ``add_blocks`` / ``add_blocked_by``: sets dependency links via :func:`block_task`.
     - ``metadata``: shallow-merged with null-deletion.
     """
-    tasks_dir = _get_tasks_dir(project_slug, base_dir)
-    task = get_task(project_slug, task_id, base_dir=base_dir)
+    tasks_dir = _get_tasks_dir(project_slug, session_id, base_dir)
+    task = get_task(project_slug, task_id, session_id=session_id, base_dir=base_dir)
     if task is None:
         return None
 
     # --- Handle status="deleted" as a delete action ---
     status_update = updates.get("status")
     if status_update == "deleted":
-        delete_task(project_slug, task_id, base_dir=base_dir)
+        delete_task(project_slug, task_id, session_id=session_id, base_dir=base_dir)
         return None  # task no longer exists
 
     # --- Extract add_blocks / add_blocked_by before general field update ---
@@ -330,17 +338,17 @@ def update_task(
     # --- Dependency links (delegated to block_task) ---
     if add_blocks:
         for block_id in add_blocks:
-            block_task(project_slug, task_id, block_id, base_dir=base_dir)
+            block_task(project_slug, task_id, block_id, session_id=session_id, base_dir=base_dir)
         # Refresh task from disk to reflect changes made by block_task
-        task = get_task(project_slug, task_id, base_dir=base_dir)
+        task = get_task(project_slug, task_id, session_id=session_id, base_dir=base_dir)
         if task is None:
             return None
 
     if add_blocked_by:
         for blocker_id in add_blocked_by:
-            block_task(project_slug, blocker_id, task_id, base_dir=base_dir)
+            block_task(project_slug, blocker_id, task_id, session_id=session_id, base_dir=base_dir)
         # Refresh task from disk to reflect changes made by block_task
-        task = get_task(project_slug, task_id, base_dir=base_dir)
+        task = get_task(project_slug, task_id, session_id=session_id, base_dir=base_dir)
         if task is None:
             return None
 
@@ -353,6 +361,7 @@ def delete_task(
     project_slug: str,
     task_id: str,
     *,
+    session_id: str | None = None,
     base_dir: Path | None = None,
 ) -> bool:
     """Delete a task by ID.
@@ -362,7 +371,7 @@ def delete_task(
     - Cleans up dependency references in all other tasks.
     - Returns ``True`` if deleted, ``False`` if not found.
     """
-    tasks_dir = _get_tasks_dir(project_slug, base_dir)
+    tasks_dir = _get_tasks_dir(project_slug, session_id, base_dir)
     task_path = tasks_dir / f"{task_id}.json"
     if not task_path.exists():
         return False
@@ -377,7 +386,7 @@ def delete_task(
     task_path.unlink()
 
     # --- Clean up dependency references in all other tasks ---
-    all_tasks = list_tasks(project_slug, base_dir=base_dir)
+    all_tasks = list_tasks(project_slug, session_id=session_id, base_dir=base_dir)
     for other in all_tasks:
         changed = False
         if task_id in other.blocks:

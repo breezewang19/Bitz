@@ -161,7 +161,7 @@ class TestCreateTask:
 
     def test_create_writes_json_file(self, slug, base_dir):
         t = create_task(slug, "Task", "Desc", base_dir=base_dir)
-        tasks_dir = _get_tasks_dir(slug, base_dir)
+        tasks_dir = _get_tasks_dir(slug, base_dir=base_dir)
         assert (tasks_dir / "1.json").exists()
         data = json.loads((tasks_dir / "1.json").read_text(encoding="utf-8"))
         assert data["id"] == "1"
@@ -170,14 +170,14 @@ class TestCreateTask:
     def test_create_updates_highwatermark(self, slug, base_dir):
         create_task(slug, "Task 1", "Desc", base_dir=base_dir)
         create_task(slug, "Task 2", "Desc", base_dir=base_dir)
-        tasks_dir = _get_tasks_dir(slug, base_dir)
+        tasks_dir = _get_tasks_dir(slug, base_dir=base_dir)
         hw = _read_highwatermark(tasks_dir)
         assert hw == 2
 
     def test_create_auto_creates_directory(self, slug, base_dir):
         # base_dir may not exist yet
         t = create_task(slug, "Task", "Desc", base_dir=base_dir)
-        tasks_dir = _get_tasks_dir(slug, base_dir)
+        tasks_dir = _get_tasks_dir(slug, base_dir=base_dir)
         assert tasks_dir.exists()
         assert (tasks_dir / "1.json").exists()
 
@@ -199,7 +199,7 @@ class TestGetTask:
         assert t is None
 
     def test_get_task_from_corrupt_json(self, slug, base_dir):
-        tasks_dir = _get_tasks_dir(slug, base_dir)
+        tasks_dir = _get_tasks_dir(slug, base_dir=base_dir)
         _ensure_dir(tasks_dir)
         # Write a corrupt JSON file
         (tasks_dir / "1.json").write_text("NOT JSON{{{", encoding="utf-8")
@@ -233,7 +233,7 @@ class TestListTasks:
 
     def test_list_skips_corrupt_json(self, slug, base_dir):
         create_task(slug, "Good task", "Desc", base_dir=base_dir)
-        tasks_dir = _get_tasks_dir(slug, base_dir)
+        tasks_dir = _get_tasks_dir(slug, base_dir=base_dir)
         # Write a corrupt file
         (tasks_dir / "99.json").write_text("BAD JSON", encoding="utf-8")
         tasks = list_tasks(slug, base_dir=base_dir)
@@ -322,7 +322,7 @@ class TestUpdateTask:
         create_task(slug, "Task", "Desc", base_dir=base_dir)
         update_task(slug, "1", subject="Updated", base_dir=base_dir)
         # Read from disk directly
-        tasks_dir = _get_tasks_dir(slug, base_dir)
+        tasks_dir = _get_tasks_dir(slug, base_dir=base_dir)
         data = json.loads((tasks_dir / "1.json").read_text(encoding="utf-8"))
         assert data["subject"] == "Updated"
 
@@ -346,7 +346,7 @@ class TestDeleteTask:
         create_task(slug, "Task 1", "Desc", base_dir=base_dir)
         create_task(slug, "Task 2", "Desc", base_dir=base_dir)
         delete_task(slug, "2", base_dir=base_dir)
-        tasks_dir = _get_tasks_dir(slug, base_dir)
+        tasks_dir = _get_tasks_dir(slug, base_dir=base_dir)
         hw = _read_highwatermark(tasks_dir)
         assert hw == 2  # highwatermark should be at least 2
 
@@ -357,7 +357,7 @@ class TestDeleteTask:
         # Highwatermark is 3
         delete_task(slug, "2", base_dir=base_dir)
         # highwatermark should still be 3 (max of current_hw and deleted_id)
-        tasks_dir = _get_tasks_dir(slug, base_dir)
+        tasks_dir = _get_tasks_dir(slug, base_dir=base_dir)
         hw = _read_highwatermark(tasks_dir)
         assert hw == 3
 
@@ -387,7 +387,7 @@ class TestDeleteTask:
 
     def test_delete_removes_json_file(self, slug, base_dir):
         create_task(slug, "Task", "Desc", base_dir=base_dir)
-        tasks_dir = _get_tasks_dir(slug, base_dir)
+        tasks_dir = _get_tasks_dir(slug, base_dir=base_dir)
         assert (tasks_dir / "1.json").exists()
         delete_task(slug, "1", base_dir=base_dir)
         assert not (tasks_dir / "1.json").exists()
@@ -405,7 +405,7 @@ class TestHelpers:
         assert len(slug) > 0
 
     def test_get_tasks_dir(self, slug, base_dir):
-        d = _get_tasks_dir(slug, base_dir)
+        d = _get_tasks_dir(slug, base_dir=base_dir)
         assert str(d).endswith(slug)
 
     def test_read_highwatermark_missing_file(self, tasks_dir):
@@ -595,7 +595,7 @@ class TestEdgeCases:
         create_task(slug, "A", "Desc", base_dir=base_dir)
         create_task(slug, "B", "Desc", base_dir=base_dir)
         # Delete the highwatermark file
-        tasks_dir = _get_tasks_dir(slug, base_dir)
+        tasks_dir = _get_tasks_dir(slug, base_dir=base_dir)
         hw_path = tasks_dir / ".highwatermark"
         assert hw_path.exists()
         hw_path.unlink()
@@ -644,3 +644,40 @@ class TestEdgeCases:
         t3 = get_task(slug, "3", base_dir=base_dir)
         assert "1" not in t2.blockedBy
         assert "1" not in t3.blockedBy
+
+
+class TestSessionIsolation:
+    """Tasks are isolated per session when session_id is provided."""
+
+    def test_different_sessions_see_different_tasks(self, slug, base_dir):
+        create_task(slug, "Session A task", "Desc", session_id="sess-a", base_dir=base_dir)
+        create_task(slug, "Session B task", "Desc", session_id="sess-b", base_dir=base_dir)
+
+        a_tasks = list_tasks(slug, session_id="sess-a", base_dir=base_dir)
+        b_tasks = list_tasks(slug, session_id="sess-b", base_dir=base_dir)
+
+        assert len(a_tasks) == 1
+        assert a_tasks[0].subject == "Session A task"
+        assert len(b_tasks) == 1
+        assert b_tasks[0].subject == "Session B task"
+
+    def test_no_session_sees_no_session_tasks(self, slug, base_dir):
+        create_task(slug, "No session task", "Desc", base_dir=base_dir)
+        create_task(slug, "Session task", "Desc", session_id="sess-x", base_dir=base_dir)
+
+        tasks = list_tasks(slug, base_dir=base_dir)
+        session_tasks = list_tasks(slug, session_id="sess-x", base_dir=base_dir)
+
+        assert len(tasks) == 1
+        assert tasks[0].subject == "No session task"
+        assert len(session_tasks) == 1
+        assert session_tasks[0].subject == "Session task"
+
+    def test_task_ids_independent_per_session(self, slug, base_dir):
+        t1 = create_task(slug, "First", "Desc", session_id="sess-a", base_dir=base_dir)
+        t2 = create_task(slug, "Second", "Desc", session_id="sess-a", base_dir=base_dir)
+        t3 = create_task(slug, "Other session", "Desc", session_id="sess-b", base_dir=base_dir)
+
+        assert t1.id == "1"
+        assert t2.id == "2"
+        assert t3.id == "1"  # Independent ID sequence per session

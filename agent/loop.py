@@ -7,6 +7,7 @@ from agent.context import Context
 from agent.adapter import LLMAdapter, LLMResponse, LLMError
 from agent.task_reminder import should_remind, get_task_summary, TASK_TOOL_NAMES
 from agent.tasks import get_project_slug
+import agent.builtin_tools
 
 
 class Agent:
@@ -59,6 +60,9 @@ class Agent:
                 return response.content
 
             if response.stop_reason == "tool_use":
+                # Set session_id for task isolation
+                agent.builtin_tools._TASK_SESSION_ID = self.context.session_id
+
                 # 提取文字块（LLM 的中间思考/说明），输出到 UI
                 text_parts = []
                 tool_blocks = []
@@ -137,7 +141,7 @@ class Agent:
                     if tool_name in TASK_TOOL_NAMES:
                         self._last_task_tool_step = self._step_count
                         break
-                summary = get_task_summary(get_project_slug())
+                summary = get_task_summary(get_project_slug(), session_id=self.context.session_id)
                 reminder = should_remind(
                     step_count=self._step_count,
                     last_task_tool_step=self._last_task_tool_step,
@@ -161,6 +165,9 @@ class Agent:
         """执行所有待确认的工具调用，将所有工具结果写入上下文，返回 (should_continue, result)"""
         if not self._pending_confirms:
             return (False, "No pending confirmation")
+
+        # Set session_id for task isolation
+        agent.builtin_tools._TASK_SESSION_ID = self.context.session_id
 
         # Save local copy before clearing
         pending = list(self._pending_confirms)
@@ -208,7 +215,7 @@ class Agent:
             if tool_name in TASK_TOOL_NAMES:
                 self._last_task_tool_step = self._step_count
                 break
-        summary = get_task_summary(get_project_slug())
+        summary = get_task_summary(get_project_slug(), session_id=self.context.session_id)
         reminder = should_remind(
             step_count=self._step_count,
             last_task_tool_step=self._last_task_tool_step,

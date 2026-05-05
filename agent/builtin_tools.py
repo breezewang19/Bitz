@@ -18,6 +18,7 @@ from agent.tasks import (
 # Module-level base_dir override (used by tests to redirect task storage).
 # When None, task functions use their default (~/.bitz/tasks).
 _TASK_BASE_DIR = None
+_TASK_SESSION_ID = None
 
 MAX_OUTPUT = 30000
 HALF_OUTPUT = MAX_OUTPUT // 2
@@ -342,8 +343,11 @@ def create_tools() -> ToolRegistry:
     # -----------------------------------------------------------------------
 
     def _task_kwargs():
-        """Return common kwargs for task CRUD functions (slug, base_dir)."""
+        """Return common kwargs for task CRUD functions (slug, session_id, base_dir)."""
         kw = {"project_slug": get_project_slug()}
+        # Inject session_id from the agent's context if available
+        if _TASK_SESSION_ID is not None:
+            kw["session_id"] = _TASK_SESSION_ID
         if _TASK_BASE_DIR is not None:
             kw["base_dir"] = _TASK_BASE_DIR
         return kw
