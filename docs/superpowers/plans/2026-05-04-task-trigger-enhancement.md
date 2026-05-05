@@ -40,11 +40,11 @@ Add to `tests/test_task_tools.py`:
 class TestTaskToolDescriptions:
     def test_task_create_description_has_when_to_use(self):
         tools = create_tools()
-        tool = next(t for t in tools._tools.values() if t["name"] == "task_create")
-        assert "何时使用" in tool["description"]
-        assert "何时不使用" in tool["description"]
-        assert "字段" in tool["description"]
-        assert "提示" in tool["description"]
+        desc = tools.tools["task_create"].description
+        assert "何时使用" in desc
+        assert "何时不使用" in desc
+        assert "字段" in desc
+        assert "提示" in desc
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -112,23 +112,23 @@ Add to `TestTaskToolDescriptions` in `tests/test_task_tools.py`:
 ```python
     def test_task_update_description_has_completion_conditions(self):
         tools = create_tools()
-        tool = next(t for t in tools._tools.values() if t["name"] == "task_update")
-        assert "何时使用" in tool["description"]
-        assert "完成条件" in tool["description"]
-        assert "可更新字段" in tool["description"]
-        assert "示例" in tool["description"]
+        desc = tools.tools["task_update"].description
+        assert "何时使用" in desc
+        assert "完成条件" in desc
+        assert "可更新字段" in desc
+        assert "示例" in desc
 
     def test_task_list_description_has_output(self):
         tools = create_tools()
-        tool = next(t for t in tools._tools.values() if t["name"] == "task_list")
-        assert "何时使用" in tool["description"]
-        assert "输出" in tool["description"]
+        desc = tools.tools["task_list"].description
+        assert "何时使用" in desc
+        assert "输出" in desc
 
     def test_task_get_description_has_tips(self):
         tools = create_tools()
-        tool = next(t for t in tools._tools.values() if t["name"] == "task_get")
-        assert "何时使用" in tool["description"]
-        assert "提示" in tool["description"]
+        desc = tools.tools["task_get"].description
+        assert "何时使用" in desc
+        assert "提示" in desc
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -695,8 +695,43 @@ git commit -m "feat: add add_system_reminder to Context, strip _meta in get_mess
 
 **Files:**
 - Modify: `agent/loop.py:10-24,127-131,141-187`
+- Test: `tests/test_task_reminder.py` (add integration-level tests)
 
-- [ ] **Step 1: Add import and state fields to Agent.__init__**
+- [ ] **Step 1: Write the failing tests for loop integration**
+
+Add to `tests/test_task_reminder.py`:
+
+```python
+class TestReminderIntegration:
+    """Tests for how should_remind would be called from the loop."""
+
+    def test_step_count_resets_after_task_tool_use(self):
+        """After using a task tool, the threshold counter resets."""
+        # Step 5: task tool used
+        last_task_tool_step = 5
+        # Step 14: threshold met (14 - 5 = 9, not yet)
+        result = should_remind(14, last_task_tool_step, None, None)
+        assert result is None
+        # Step 15: threshold met (15 - 5 = 10)
+        result = should_remind(15, last_task_tool_step, None, None)
+        assert result is not None
+
+    def test_reminder_not_injected_when_task_tool_recently_used(self):
+        """If task tool was used recently, no reminder even at high step count."""
+        result = should_remind(100, 95, None, None)
+        assert result is None
+
+    def test_all_four_task_tools_count(self):
+        """All 4 task tools should be in TASK_TOOL_NAMES."""
+        assert TASK_TOOL_NAMES == {"task_create", "task_update", "task_list", "task_get"}
+```
+
+- [ ] **Step 2: Run tests to verify they pass**
+
+Run: `.venv/bin/python -m pytest tests/test_task_reminder.py::TestReminderIntegration -v`
+Expected: PASS (these test should_remind logic, not loop.py directly)
+
+- [ ] **Step 3: Add import and state fields to Agent.__init__**
 
 In `agent/loop.py`, add import at the top (after line 4):
 
@@ -779,7 +814,7 @@ Expected: All tests pass
 
 - [ ] **Step 2: Verify tool descriptions are rich**
 
-Run: `.venv/bin/python -c "from agent.builtin_tools import create_tools; t = create_tools(); [print(k, len(v['description'])) for k, v in t._tools.items() if k.startswith('task_')]"`
+Run: `.venv/bin/python -c "from agent.builtin_tools import create_tools; t = create_tools(); [print(k, len(v.description)) for k, v in t.tools.items() if k.startswith('task_')]"`
 Expected: Each task tool description is >100 chars (was ~30-50 before)
 
 - [ ] **Step 3: Verify RULES contains task guidance**
@@ -795,6 +830,6 @@ Expected: Non-None output with nudge text
 - [ ] **Step 5: Final commit if any fixes needed**
 
 ```bash
-git add -A
+git add agent/ tests/ docs/
 git commit -m "fix: address any issues found during final verification"
 ```
