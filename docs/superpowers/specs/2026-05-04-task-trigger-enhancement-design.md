@@ -132,38 +132,49 @@ This mirrors Claude Code's "Break down and manage your work with the task_create
 Pure function module with no class dependencies:
 
 ```python
-TASK_TOOL_NAMES = {"task_create", "task_update"}
+TASK_TOOL_NAMES = {"task_create", "task_update", "task_list", "task_get"}
 REMINDER_THRESHOLD = 10  # steps since last task tool use
 REMINDER_COOLDOWN = 10   # steps between reminders
 
 def should_remind(
-    messages: list[dict],
     step_count: int,
     last_task_tool_step: int | None,
     last_reminder_step: int | None,
-    has_active_tasks: bool,
+    task_summary: str | None,
 ) -> str | None:
     """Check whether a task reminder should be injected.
+
+    Args:
+        step_count: Current agent step count.
+        last_task_tool_step: Step count when a task tool was last used, or None.
+        last_reminder_step: Step count when a reminder was last injected, or None.
+        task_summary: Formatted task list string (e.g. "#1 [pending] Fix bug"),
+                      or None if no active tasks exist.
 
     Returns the reminder text, or None if no reminder is needed.
     """
 ```
+
+Note: All four task tools count as task engagement. Using `task_list`/`task_get` shows the agent is actively managing its task state, which should reset the reminder counter.
 
 ### Trigger Conditions
 
 All must be true:
 1. `last_task_tool_step is None` or `step_count - last_task_tool_step >= REMINDER_THRESHOLD`
 2. `last_reminder_step is None` or `step_count - last_reminder_step >= REMINDER_COOLDOWN`
-3. `has_active_tasks` is True (there are pending or in_progress tasks)
+
+The reminder fires regardless of whether active tasks exist. The presence/absence of tasks only affects the reminder content, not whether it triggers.
 
 ### Reminder Content
 
-Without active tasks:
+The `task_summary` parameter determines the variant:
+
+When `task_summary is None` (no active tasks):
 ```
 你最近没有使用任务工具。如果正在处理多步骤任务，考虑用 task_create 创建新任务，用 task_update 更新状态（开始时 in_progress，完成时 completed）。不要向用户提及此提醒。
 ```
 
-With active tasks:
+When `task_summary` is a formatted string (active tasks exist):
 ```
 你最近没有使用任务工具。如果正在处理多步骤任务，考虑用 task_create 创建新任务，用 task_update 更新状态（开始时 in_progress，完成时 completed）。不要向用户提及此提醒。
 
@@ -172,23 +183,50 @@ With active tasks:
 #2 [in_progress] 编写测试
 ```
 
+### Data Source for `task_summary`
+
+The caller in `loop.py` obtains `task_summary` by calling a helper function in `task_reminder.py`:
+
+```python
+def get_task_summary(project_slug: str, base_dir: str | None = None) -> str | None:
+    """Return a formatted task list string for active tasks, or None."""
+    from agent.tasks import list_tasks
+    all_tasks = list_tasks(project_slug, base_dir=base_dir)
+    active = [t for t in all_tasks
+              if t.status.value in ("pending", "in_progress")
+              and not t.metadata.get("_internal")]
+    if not active:
+        return None
+    lines = [f"#{t.id} [{t.status.value}] {t.subject}" for t in active]
+    return "\n".join(lines)
+```
+
+The `Agent` class obtains `project_slug` via `get_project_slug()` from `agent/tasks.py` (same function used by `builtin_tools.py`).
+
 ### Integration in `agent/loop.py`
 
 Add to the `Agent` class:
 - `_last_task_tool_step: int | None = None`
 - `_last_reminder_step: int | None = None`
 
-After `self._step_count += 1` in the tool_use branch:
-1. Check if any executed tool name is in `TASK_TOOL_NAMES`; if so, update `_last_task_tool_step`
-2. Call `should_remind()` with current state
-3. If reminder returned, inject via `context.add_system_reminder(text)` and update `_last_reminder_step`
+After the context is updated with the current turn's results (after `context.add_assistant_message()` and `context.add_tool_results()` calls, at the end of the tool_use branch, before the `continue`):
+
+1. Check if any executed tool name is in `TASK_TOOL_NAMES`; if so, update `_last_task_tool_step = self._step_count`
+2. Call `should_remind()` with current state and `task_summary` from `get_task_summary()`
+3. If reminder returned, inject via `context.add_system_reminder(text)` and update `_last_reminder_step = self._step_count`
+
+This injection position ensures the reminder appears after the current turn's tool results, maintaining correct message ordering for the Anthropic API.
 
 ### Context Support: `agent/context.py`
 
 Add method:
 ```python
 def add_system_reminder(self, text: str) -> None:
-    """Add a meta user message for system reminders (task reminders, etc.)."""
+    """Add a system reminder as a user message.
+
+    The reminder is stored with a _meta key for internal tracking.
+    get_messages() strips _meta before returning messages to the API.
+    """
     self.messages.append({
         "role": "user",
         "content": text,
@@ -196,7 +234,19 @@ def add_system_reminder(self, text: str) -> None:
     })
 ```
 
-The `_meta` flag distinguishes system reminders from real user messages. The `_trim()` method should preserve these like regular messages.
+**API safety**: `get_messages()` must strip the `_meta` key before returning messages to the Anthropic API. Modify `get_messages()` to remove any non-standard keys from message dicts:
+
+```python
+def get_messages(self) -> list[dict]:
+    """Return messages suitable for the Anthropic API."""
+    result = []
+    for msg in self.messages:
+        clean = {k: v for k, v in msg.items() if k in ("role", "content")}
+        result.append(clean)
+    return result
+```
+
+**Trimming behavior**: `_meta` messages are subject to normal `_trim()` behavior — they are ephemeral nudges, not permanent context. They will be trimmed like any other message when they fall outside the `keep_last_n` window. `_meta` messages must never appear between a `tool_use` and its corresponding `tool_result` (guaranteed by the injection position after tool results are written).
 
 ## 4. Testing Strategy
 
@@ -204,12 +254,20 @@ The `_meta` flag distinguishes system reminders from real user messages. The `_t
 
 - `should_remind` returns None when threshold not met
 - `should_remind` returns None when cooldown not met
-- `should_remind` returns reminder when both thresholds met and active tasks exist
-- `should_remind` returns None when no active tasks
-- `should_remind` includes task list in output when active tasks exist
-- `should_remind` returns plain nudge when no active tasks
+- `should_remind` returns reminder when both thresholds met
+- `should_remind` includes task list in output when task_summary provided
+- `should_remind` returns plain nudge when task_summary is None
 - Step counting resets after task tool use
 - Cooldown prevents rapid re-reminders
+- `get_task_summary` returns None when no active tasks
+- `get_task_summary` returns formatted string when active tasks exist
+- `get_task_summary` filters out _internal tasks
+
+### `tests/test_context.py` (modify)
+
+- `add_system_reminder` appends user message with _meta flag
+- `get_messages` strips _meta key from messages
+- `get_messages` preserves standard role/content fields
 
 ### `tests/test_task_tools.py` (modify)
 
@@ -218,9 +276,11 @@ The `_meta` flag distinguishes system reminders from real user messages. The `_t
 - Verify task_list description contains "输出" section
 - Verify task_get description contains "提示" section
 
-### `tests/test_prompt.py` (modify or new)
+### `tests/test_prompt.py` (**New**)
 
 - Verify RULES contains task_create/task_update guidance
+
+Note: Tool descriptions are in Chinese while `input_schema` field descriptions remain in English, consistent with the existing pattern in `builtin_tools.py` (all non-spawn tools use English for input_schema descriptions).
 
 ## 5. File Changes Summary
 
@@ -230,7 +290,8 @@ The `_meta` flag distinguishes system reminders from real user messages. The `_t
 | `agent/prompt.py` | Modify | Add task tool guidance bullet to RULES |
 | `agent/task_reminder.py` | **New** | Pure function module for reminder logic |
 | `agent/loop.py` | Modify | Add reminder check after step increment, track task tool usage |
-| `agent/context.py` | Modify | Add `add_system_reminder()` method |
+| `agent/context.py` | Modify | Add `add_system_reminder()` method; `get_messages()` strips `_meta` key |
 | `tests/test_task_reminder.py` | **New** | Unit tests for reminder logic |
 | `tests/test_task_tools.py` | Modify | Add description content tests |
-| `tests/test_prompt.py` | Modify or new | Verify RULES contains task guidance |
+| `tests/test_context.py` | Modify | Tests for `add_system_reminder()` and `_meta` stripping |
+| `tests/test_prompt.py` | **New** | Verify RULES contains task guidance |
