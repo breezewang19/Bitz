@@ -1,5 +1,7 @@
 # Bitz 🐱
 
+> **v0.5.0**
+
 [中文文档](README_CN.md)
 
 A minimal AI Agent with a beautiful terminal chat interface — core agent under 1000 lines of code.
@@ -51,6 +53,9 @@ tui.py (entry point)
 │   ├── prompt.py       System prompt builder (persona + rules + CLAUDE.md + environment + skills)
 │   ├── skills.py       SkillRegistry — load/parse .md skill files, trigger lookup
 │   ├── models.py       ModelStore — multi-model config persistence (~/.bitz/models.json)
+│   ├── tasks.py        Task — data model, persistence CRUD, file-based locking
+│   ├── task_reminder.py  Task reminder — step-based reminder injection
+│   ├── session.py      Session — session management, path sanitization
 │   ├── agent_definition.py  AgentDefinition dataclass + 3 built-in agent types
 │   ├── subagent.py     SubAgent — concurrent execution, context isolation
 │   └── fork_message_builder.py  ForkMessageBuilder — prompt cache sharing for parallel subagents
@@ -70,6 +75,9 @@ tui.py (entry point)
 │       ├── status.py    StatusBar (model, steps, tokens, CWD)
 │       ├── confirm.py   Inline y/n confirm prompt
 │       ├── banner.py    Animated cat banner with gradient + goodbye animation
+│       ├── task_list.py  Task list widget with status icons and auto-collapse
+│       ├── session_list.py  Session list with select-then-act pattern
+│       ├── session_banner.py  Session info banner
 │       ├── copy_button.py  Clipboard copy button widget
 │       ├── model_select.py  Model selection modal
 │       ├── model_add.py     Model add form modal

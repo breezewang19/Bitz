@@ -83,7 +83,7 @@ def _get_accent(key: str) -> str:
 
 WELCOME_TEXT = "Welcome Back Bitz-Cat!"
 GOODBYE_TEXT = "Goodbye~"
-VERSION = "v0.1.0"
+VERSION = "v0.5.0"
 
 BORDER_COLOR = COLORS["muted"]
 MODEL_STYLE = Style(color=_get_accent("model"), bold=True)

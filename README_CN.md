@@ -1,5 +1,7 @@
 # Bitz 🐱
 
+> **v0.5.0**
+
 [English](README.md)
 
 一个极简 AI Agent，拥有精美的终端聊天界面 — 核心代码不到 1000 行。
@@ -51,6 +53,9 @@ tui.py (入口)
 │   ├── prompt.py       系统提示词构建器（人设 + 规则 + CLAUDE.md + 环境 + skills）
 │   ├── skills.py       SkillRegistry — 加载/解析 .md skill 文件、触发查找
 │   ├── models.py       ModelStore — 多模型配置持久化（~/.bitz/models.json）
+│   ├── tasks.py        Task — 数据模型、持久化 CRUD、文件锁
+│   ├── task_reminder.py  任务提醒 — 基于步数的提醒注入
+│   ├── session.py      Session — 会话管理、路径清洗
 │   ├── agent_definition.py  AgentDefinition 数据类 + 3 种内置代理类型
 │   ├── subagent.py     SubAgent — 并发执行、上下文隔离
 │   └── fork_message_builder.py  ForkMessageBuilder — 并行子代理的 prompt cache 共享
@@ -70,6 +75,9 @@ tui.py (入口)
 │       ├── status.py    StatusBar（模型、步数、Token、工作目录）
 │       ├── confirm.py   内联 y/n 确认提示
 │       ├── banner.py    动画猫咪横幅（渐变色）+ 退出动画
+│       ├── task_list.py  任务列表组件（状态图标、自动折叠）
+│       ├── session_list.py  会话列表（选择-操作模式）
+│       ├── session_banner.py  会话信息横幅
 │       ├── copy_button.py  剪贴板复制按钮组件
 │       ├── model_select.py  模型选择弹窗
 │       ├── model_add.py     添加模型表单弹窗
