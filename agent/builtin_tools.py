@@ -612,7 +612,6 @@ def create_tools() -> ToolRegistry:
             "required": ["task_id"],
         },
         handler=task_update_handler,
-        dangerous=True,
     )
 
     tools.register(

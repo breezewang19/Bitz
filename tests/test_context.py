@@ -30,13 +30,15 @@ def test_context_add_tool_result():
     """测试添加工具结果（Anthropic 格式）"""
     ctx = Context(system_prompt="You are helpful.")
     ctx.add_user("What is the weather?")
+    # 需要先有对应的 tool_use，否则 _ensure_pair_integrity 会移除孤立的 tool_result
+    ctx.add_assistant_message([{"type": "tool_use", "id": "toolu_01", "name": "bash", "input": {"command": "weather"}}])
     ctx.add_tool_result("toolu_01", "Sunny, 25 degrees")
-    assert len(ctx.messages) == 2
-    assert ctx.messages[1]["role"] == "user"
+    assert len(ctx.messages) == 3
+    assert ctx.messages[2]["role"] == "user"
     # Anthropic 格式：tool_use_id 在 content block 内部
-    assert ctx.messages[1]["content"][0]["type"] == "tool_result"
-    assert ctx.messages[1]["content"][0]["tool_use_id"] == "toolu_01"
-    assert ctx.messages[1]["content"][0]["content"] == "Sunny, 25 degrees"
+    assert ctx.messages[2]["content"][0]["type"] == "tool_result"
+    assert ctx.messages[2]["content"][0]["tool_use_id"] == "toolu_01"
+    assert ctx.messages[2]["content"][0]["content"] == "Sunny, 25 degrees"
 
 
 def test_context_trim():

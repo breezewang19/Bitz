@@ -4,12 +4,15 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import time
-import fcntl
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+if sys.platform != "win32":
+    import fcntl
 
 from agent.session import sanitize_path
 
@@ -25,13 +28,33 @@ class _TaskDirLock:
         self._fd: int | None = None
 
     def __enter__(self):
-        self._fd = os.open(str(self._lock_path), os.O_CREAT | os.O_RDWR)
-        fcntl.flock(self._fd, fcntl.LOCK_EX)
+        if sys.platform == "win32":
+            import msvcrt
+            self._fd = os.open(str(self._lock_path), os.O_CREAT | os.O_RDWR)
+            # Windows: LK_NBLCK 非阻塞，需要重试
+            for _ in range(50):
+                try:
+                    msvcrt.locking(self._fd, msvcrt.LK_NBLCK, 1)
+                    return self
+                except OSError:
+                    time.sleep(0.05)
+            # 重试耗尽，强制获取
+            msvcrt.locking(self._fd, msvcrt.LK_LOCK, 1)
+        else:
+            self._fd = os.open(str(self._lock_path), os.O_CREAT | os.O_RDWR)
+            fcntl.flock(self._fd, fcntl.LOCK_EX)
         return self
 
     def __exit__(self, *exc):
         if self._fd is not None:
-            fcntl.flock(self._fd, fcntl.LOCK_UN)
+            if sys.platform == "win32":
+                import msvcrt
+                try:
+                    msvcrt.locking(self._fd, msvcrt.LK_UNLCK, 1)
+                except OSError:
+                    pass
+            else:
+                fcntl.flock(self._fd, fcntl.LOCK_UN)
             os.close(self._fd)
             self._fd = None
 

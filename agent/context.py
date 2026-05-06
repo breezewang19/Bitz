@@ -56,7 +56,7 @@ class Context:
             })
         msg = {"role": "user", "content": blocks}
         self.messages.append(msg)
-        self._trim()
+        self._ensure_pair_integrity()
         self._persist(msg)
 
     def add_system_reminder(self, text: str) -> None:

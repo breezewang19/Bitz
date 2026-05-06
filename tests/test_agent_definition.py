@@ -39,7 +39,7 @@ class TestAgentDefinition:
         assert defn.model is None
         assert defn.get_system_prompt is None
         assert defn.omit_claude_md is False
-        assert defn.max_steps == 10
+        assert defn.max_steps == 50
         assert defn.permission_mode == "auto"
 
     def test_create_full_definition(self):
