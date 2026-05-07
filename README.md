@@ -86,12 +86,12 @@ python tui.py
 
 | # | Topic | Key Concept |
 |---|---|---|
-| 01 | [Why Build an Agent](learning/01_why.md) | LLM + tools = agent |
+| 01 | [Why Build an Agent](learning/01-agent-frameworks-overview.md) | LLM + tools = agent |
 | 02 | [Building the Agent](learning/02_agent.md) | ReAct loop, context, tools |
-| 03 | [Tool Design](learning/03_tools.md) | Safety, readonly detection, confirmation |
+| 03 | [Robustness Engineering](learning/03-agent-robustness-engineering.md) | Safety, readonly detection, confirmation |
 | 04 | [TUI](learning/04_tui.md) | Event-driven UI, widget composition |
-| 05 | [Testing](learning/05_testing.md) | Mock LLM, integration tests |
-| 06 | [Architecture](learning/06_architecture.md) | Module boundaries, data flow |
+| 05 | [Prompt Engineering](learning/05-prompt-engineering.md) | Layered prompts, caching, tool descriptions |
+| 06 | [Skill System](learning/06-skill-system.md) | Skill discovery, prompt presets |
 | 07 | [Beyond Minimal](learning/07_beyond_minimal.md) | Tasks, sub-agents, skills, multi-model |
 
 ## Testing

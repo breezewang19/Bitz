@@ -86,12 +86,12 @@ python tui.py
 
 | # | 主题 | 核心概念 |
 |---|---|---|
-| 01 | [为什么要造智能体](learning/01_why.md) | LLM + 工具 = 智能体 |
+| 01 | [为什么要造智能体](learning/01-agent-frameworks-overview.md) | LLM + 工具 = 智能体 |
 | 02 | [构建智能体](learning/02_agent.md) | ReAct 循环、上下文、工具 |
-| 03 | [工具设计](learning/03_tools.md) | 安全、只读检测、确认机制 |
+| 03 | [鲁棒性工程](learning/03-agent-robustness-engineering.md) | 安全、只读检测、确认机制 |
 | 04 | [TUI](learning/04_tui.md) | 事件驱动 UI、组件组合 |
-| 05 | [测试](learning/05_testing.md) | Mock LLM、集成测试 |
-| 06 | [架构](learning/06_architecture.md) | 模块边界、数据流 |
+| 05 | [提示词工程](learning/05-prompt-engineering.md) | 分层提示词、缓存、工具描述 |
+| 06 | [技能系统](learning/06-skill-system.md) | 技能发现、提示词预设 |
 | 07 | [超越 Minimal](learning/07_beyond_minimal.md) | 任务、子智能体、技能、多模型 |
 
 ## 测试
