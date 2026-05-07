@@ -1,162 +1,106 @@
-# Bitz 🐱
+# Bitz
 
-> **v0.5.0**
+A learning-oriented AI agent — from a 526-line core to a full toolchain.
 
-[中文文档](README_CN.md)
+## Two Paths
 
-A minimal AI Agent with a beautiful terminal chat interface — core agent under 1000 lines of code.
-
-**Bitz** is a learning project that teaches the ReAct pattern, tool calling, LLM adaptation, context management, and TUI development through a working AI agent you can chat with in your terminal.
-
-## Features
-
-- **ReAct Agent Loop** — Think → Act → Observe cycle with configurable max steps
-- **8 Built-in Tools** — bash, read_file, write_file, edit_file, glob, grep, fetch, spawn
-- **3-Tier Danger Detection** — Auto-approve readonly, confirm dangerous, force-confirm destructive
-- **SubAgent / Spawn** — Spawn child agents for parallel tasks; 3 built-in agent types (general-purpose, explore, plan)
-- **Fork Mode** — Share prompt cache between parent and child agents for efficient parallel execution
-- **Dual LLM Protocol** — Anthropic API (native) and OpenAI-compatible API support
-- **Beautiful TUI** — Markdown rendering, collapsible tool cards with status icons, syntax highlighting
-- **Theme System** — 3 themes (cat-dark / cat-light / cat-nord), auto-detect terminal, `/theme` to switch
-- **Session Insights** — Token usage tracking, per-turn timing, step counter
-- **Skill System** — Prompt-driven behavior orchestration, `/review`, `/debug`, `/explain` built-in, user-customizable via `.bitz/skills/`; supports directory-type skills with rules/ and references/ subdirectories (e.g. `/admin-review`)
-- **Slash Commands** — /help, /new, /clear, /compact, /theme, /models, /skill with Tab autocomplete
-- **Multi-line Input** — Shift+Enter for newline, auto-expanding textarea
-- **Code Diff View** — Inline diff for file edits with syntax highlighting
-- **SubAgent Cards** — Real-time status cards for spawned sub-agents with collapsible logs
-- **Copy Buttons** — Copy to clipboard on messages and tool results
-- **Mouse Support** — Scroll, click to expand/collapse, cursor positioning
-- **Inline Confirmation** — Dangerous commands show y/n prompt right in the chat
-- **Graceful Cancellation** — ESC to cancel, Ctrl+C to quit
-- **Model Management** — Multi-model config persisted to `~/.bitz/models.json`, runtime switching via /models
-
-## Quick Start
-
-```bash
-cd Bitz
-pip install -r requirements.txt
-cp .env.example .env          # Edit .env to add your ANTHROPIC_API_KEY
-python tui.py                  # Launch the TUI
-python tui.py --legacy         # Launch the legacy ANSI TUI (fallback)
-```
+| | Reading Path | Usage Path |
+|---|---|---|
+| **Goal** | Understand how an agent works | Use a full-featured agent |
+| **Code** | `minimal/` — 526 lines, 4 files | `agent/` + `tui/` — ~4400 lines |
+| **Run** | `python -m minimal.agent` | `python tui.py` |
+| **Deps** | `anthropic`, `python-dotenv` | see `requirements.txt` |
 
 ## Architecture
 
-```
-tui.py (entry point)
-├── agent/              Core Agent modules
-│   ├── loop.py         Agent — ReAct loop, confirm flow, cancellation
-│   ├── adapter.py      LLMAdapter — Anthropic/OpenAI API, 5x retry, cancel-aware, stream_chat()
-│   ├── context.py      Context — message history, active_skill, tool_use/tool_result pairing
-│   ├── tools.py        ToolRegistry — register/execute, 3-tier danger detection
-│   ├── builtin_tools.py  8 built-in tool definitions
-│   ├── prompt.py       System prompt builder (persona + rules + CLAUDE.md + environment + skills)
-│   ├── skills.py       SkillRegistry — load/parse .md skill files, trigger lookup
-│   ├── models.py       ModelStore — multi-model config persistence (~/.bitz/models.json)
-│   ├── tasks.py        Task — data model, persistence CRUD, file-based locking
-│   ├── task_reminder.py  Task reminder — step-based reminder injection
-│   ├── session.py      Session — session management, path sanitization
-│   ├── agent_definition.py  AgentDefinition dataclass + 3 built-in agent types
-│   ├── subagent.py     SubAgent — concurrent execution, context isolation
-│   └── fork_message_builder.py  ForkMessageBuilder — prompt cache sharing for parallel subagents
-├── skills/             Built-in Skill files
-│   ├── code-review.md  /review — code quality audit
-│   ├── debug.md        /debug — systematic debugging
-│   ├── explain.md      /explain — code explanation
-│   └── admin-review/   /admin-review — administrative document compliance review (38 review points)
-├── tui/                Textual TUI
-│   ├── app.py          BitzApp — agent integration, skill activation, tool logger, confirm, timing
-│   ├── theme.py        3 native themes + auto-detect
-│   └── widgets/
-│       ├── chat.py     ChatLog, UserMessage, AssistantMessage, ThinkingIndicator, SubAgentCard, TurnTiming
-│       ├── tool_card.py  Collapsible tool cards (⟳/✓/✗ status icons) + diff view
-│       ├── input.py     InputBar + MessageInput (TextArea) + command/skill autocomplete
-│       ├── command_popup.py  Dynamic command+skill autocomplete with virtual scroll
-│       ├── status.py    StatusBar (model, steps, tokens, CWD)
-│       ├── confirm.py   Inline y/n confirm prompt
-│       ├── banner.py    Animated cat banner with gradient + goodbye animation
-│       ├── task_list.py  Task list widget with status icons and auto-collapse
-│       ├── session_list.py  Session list with select-then-act pattern
-│       ├── session_banner.py  Session info banner
-│       ├── copy_button.py  Clipboard copy button widget
-│       ├── model_select.py  Model selection modal
-│       ├── model_add.py     Model add form modal
-│       └── model_confirm.py Delete confirmation modal
-├── learning/           Progressive tutorials
-├── tests/              Test suite (20 test files)
-└── docs/               Design docs
-```
-
-## Key Data Flow
+### minimal/ — Reading Path
 
 ```
-User types in InputBar
-    │
-    ▼
-MessageSubmitted event
-    │
-    ▼
-BitzApp._run_agent() → asyncio.create_task(_agent_loop())
-    │
-    ▼
-Agent.run() in ThreadPoolExecutor (non-blocking to Textual event loop)
-    │
-    ▼  (ReAct Loop)
-    ├──► LLMAdapter.chat() → Anthropic/OpenAI API
-    │        │
-    │        ▼
-    │    LLMResponse (stop_reason: "end_turn" | "tool_use" | "max_tokens")
-    │        │
-    │        ▼  (if tool_use)
-    │    ToolRegistry.execute() → 3-tier danger check
-    │        │
-    │        ├── auto-approve → execute immediately
-    │        ├── [CONFIRM_REQUIRED] → inline ConfirmPrompt → user y/n
-    │        └── force-confirm → inline ConfirmPrompt → user y/n
-    │        │
-    │        ▼
-    │    Context.add_tool_result() → continue loop
-    │
-    ▼  (if end_turn)
-Assistant response rendered in ChatLog with Markdown
+minimal/
+├── agent.py    (112 lines)  ReAct loop + REPL
+├── context.py  (102 lines)  Message management + trimming
+├── llm.py       (95 lines)  Anthropic API + retry
+└── tools.py    (217 lines)  Tool registry + 5 built-in tools
 ```
 
-## Built-in Agent Types
+### Full Version
 
-| Type | Tools | Permission | Max Steps | Description |
-|------|-------|-----------|-----------|-------------|
-| general-purpose | All | auto | 50 | Full capabilities |
-| explore | No write_file, edit_file, spawn | readonly | 50 | Read-only codebase exploration |
-| plan | No write_file, edit_file, spawn | readonly | 50 | Architecture planning |
+```
+agent/
+├── loop.py              ReAct loop (cancel, sub-agents)
+├── context.py           Message management (persistence)
+├── adapter.py           Multi-protocol LLM adapter
+├── tools.py             Tool registry + execution context
+├── builtin_tools.py     7 built-in tools
+├── tool_result.py       ToolResult with confirm/error
+├── subagent.py          Sub-agent spawn + fork
+├── task_manager.py      Task CRUD (JSON + file lock)
+├── skill_registry.py    Skill discovery + loading
+└── model_manager.py     Multi-model switching
+tui/
+├── app.py               Textual TUI app
+├── theme.py             Theme system
+└── widgets/             9 custom widgets
+```
+
+## Features
+
+### Core (minimal + full)
+
+- ReAct loop — user input → LLM → tool execution → result injection → repeat
+- 5 tools — bash, read_file, write_file, edit_file, glob
+- Dangerous operation confirmation (sync y/n)
+- Context trimming with tool_use/tool_result pair integrity
+- API retry with exponential backoff
+
+### Extended (full version only)
+
+- TUI — Textual-based terminal UI with streaming output
+- Sub-agents — spawn child agents, fork mode (shared prompt cache prefix)
+- Skill system — preset system_prompt + tool sets, auto-discovery
+- Task management — create/update/list/get, JSON + file lock
+- Multi-model — switch models at runtime
+- OpenAI protocol — compatible with OpenAI-style APIs
+- Extra tools — grep, fetch
+- Session persistence — save/restore conversations
+
+## Quick Start
+
+### minimal
+
+```bash
+pip install -r minimal/requirements.txt
+echo "ANTHROPIC_API_KEY=your-key" > .env
+python -m minimal.agent
+```
+
+### Full Version
+
+```bash
+pip install -r requirements.txt
+echo "ANTHROPIC_API_KEY=your-key" > .env
+python tui.py
+```
+
+## Learning
+
+| # | Topic | Key Concept |
+|---|---|---|
+| 01 | [Why Build an Agent](learning/01_why.md) | LLM + tools = agent |
+| 02 | [Building the Agent](learning/02_agent.md) | ReAct loop, context, tools |
+| 03 | [Tool Design](learning/03_tools.md) | Safety, readonly detection, confirmation |
+| 04 | [TUI](learning/04_tui.md) | Event-driven UI, widget composition |
+| 05 | [Testing](learning/05_testing.md) | Mock LLM, integration tests |
+| 06 | [Architecture](learning/06_architecture.md) | Module boundaries, data flow |
+| 07 | [Beyond Minimal](learning/07_beyond_minimal.md) | Tasks, sub-agents, skills, multi-model |
 
 ## Testing
 
 ```bash
-pytest -v                                          # Run all tests
-pytest tests/test_loop.py -v                       # Run a single test file
-pytest tests/test_loop.py::TestAgent::test_basic -v  # Run a single test
+python -m pytest tests/ -v
 ```
 
-## Learning Path
-
-The `learning/` directory contains progressive tutorials:
-
-| # | Topic | Key Concepts |
-|---|-------|-------------|
-| 01 | Agent Frameworks Overview | Landscape of agent frameworks, design trade-offs |
-| 02 | Minimal Agent Design | ReAct pattern, tool calling, max steps |
-| 03 | Agent Robustness Engineering | Retry, cancellation, danger detection, context trimming |
-| 04 | TUI with Textual | Layout, events, thread safety, confirm flow, aesthetics |
-| 05 | Prompt Engineering | Layered prompts, dynamic injection, tool descriptions, caching |
-| 06 | [Skill System](learning/06-skill-system.md) | Skill ≠ Tool, frontmatter parsing, dynamic system_prompt assembly |
-
-## Conventions
-
-- Tool output truncated at 30,000 chars
-- `fetch` tool has SSRF protection (blocks private/internal IPs)
-- `LLMAdapter` uses lazy `import anthropic` to avoid ~3s startup penalty
-- Agent persona: "Bitz-Cat" — friendly, cat-like assistant
-- Parallel tool execution via `ThreadPoolExecutor`
+30 tests covering context, tools, adapter, and loop.
 
 ## License
 
